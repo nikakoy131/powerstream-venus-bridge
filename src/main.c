@@ -15,7 +15,7 @@ void app_main(void)
     }
 
     wifi_apsta_start();
-    /* ble_scan_start(); */  /* TEMP: disabled to isolate WiFi coex issue */
+    ble_scan_start();
     http_server_start();
 
     ESP_LOGI(TAG, "Ready — AP: 192.168.4.1  web UI: http://192.168.4.1");
