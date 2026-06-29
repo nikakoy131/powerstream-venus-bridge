@@ -1,0 +1,22 @@
+# ESP-IDF build artifacts
+build/
+sdkconfig
+sdkconfig.old
+sdkconfig.defaults.tmp
+
+# nanopb generated (regenerate from .proto)
+main/proto/*.pb.c
+main/proto/*.pb.h
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Secrets
+secrets.h
+wifi_credentials.h
+
+# macOS
+.DS_Store
