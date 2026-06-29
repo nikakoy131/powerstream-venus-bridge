@@ -80,7 +80,7 @@ static void on_sync(void)
         .window            = 48,
         .filter_policy     = 0,
         .limited           = 0,
-        .passive           = 1,
+        .passive           = 0,  /* active: send SCAN_REQ to get scan responses with names */
         .filter_duplicates = 0,
     };
     ble_gap_disc(BLE_OWN_ADDR_PUBLIC, BLE_HS_FOREVER, &params, gap_event, NULL);
