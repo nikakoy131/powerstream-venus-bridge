@@ -71,12 +71,16 @@ static int gap_event(struct ble_gap_event *ev, void *arg)
 
 static void on_sync(void)
 {
+    /* Units of 0.625 ms. window < itvl => duty-cycled scan that leaves
+       radio airtime for WiFi (shared 2.4 GHz radio on the C6).
+       itvl=160 (100 ms), window=48 (30 ms) ~= 30% duty cycle.
+       Passive scan: don't transmit scan requests, lighter on coexistence. */
     struct ble_gap_disc_params params = {
-        .itvl              = 0,
-        .window            = 0,
+        .itvl              = 160,
+        .window            = 48,
         .filter_policy     = 0,
         .limited           = 0,
-        .passive           = 0,
+        .passive           = 1,
         .filter_duplicates = 0,
     };
     ble_gap_disc(BLE_OWN_ADDR_PUBLIC, BLE_HS_FOREVER, &params, gap_event, NULL);
