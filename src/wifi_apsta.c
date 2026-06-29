@@ -31,6 +31,10 @@ static void event_handler(void *arg, esp_event_base_t base,
         s_retry = 0;
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_START) {
         ESP_LOGI(TAG, "AP started — SSID: %s  IP: 192.168.4.1", AP_SSID);
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STACONNECTED) {
+        ESP_LOGI(TAG, "Client connected to AP");
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STADISCONNECTED) {
+        ESP_LOGI(TAG, "STA disconnected from AP");
     }
 }
 
@@ -58,6 +62,8 @@ void wifi_apsta_start(void)
             .channel        = AP_CHANNEL,
             .max_connection = AP_MAX_STA,
             .authmode       = WIFI_AUTH_WPA2_PSK,
+            .pairwise_cipher = WIFI_CIPHER_TYPE_CCMP,
+            .pmf_cfg        = { .capable = false, .required = false },
         },
     };
 
