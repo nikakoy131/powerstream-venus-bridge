@@ -1,12 +1,14 @@
-# ESP-IDF build artifacts
-build/
+# PlatformIO
+.pio/
+
+# ESP-IDF / sdkconfig (generated from sdkconfig.defaults)
 sdkconfig
 sdkconfig.old
 sdkconfig.defaults.tmp
 
 # nanopb generated (regenerate from .proto)
-main/proto/*.pb.c
-main/proto/*.pb.h
+src/proto/*.pb.c
+src/proto/*.pb.h
 
 # IDE
 .vscode/
@@ -15,8 +17,7 @@ main/proto/*.pb.h
 *.swo
 
 # Secrets
-secrets.h
-wifi_credentials.h
+src/wifi_secrets.h
 
 # macOS
 .DS_Store

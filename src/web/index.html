@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BLE Scanner — PowerStream Bridge</title>
+<style>
+  body { font-family: monospace; background: #111; color: #ddd; margin: 2rem; }
+  h1   { color: #4af; margin-bottom: 0.3rem; }
+  #status { font-size: 0.8rem; color: #888; margin-bottom: 1rem; }
+  table  { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #333; padding: 0.4rem 0.8rem; text-align: left; }
+  th     { background: #222; color: #adf; cursor: pointer; user-select: none; }
+  th:hover { background: #2a2a2a; }
+  tr.ecoflow { background: #1a2a1a; }
+  tr.ecoflow td:first-child::after { content: " ⚡"; color: #6f6; }
+  .rssi-strong { color: #6f6; }
+  .rssi-medium { color: #fa0; }
+  .rssi-weak   { color: #f44; }
+  #count { font-size: 0.85rem; color: #888; margin-top: 0.5rem; }
+</style>
+</head>
+<body>
+<h1>BLE Scanner</h1>
+<div id="status">Connecting…</div>
+<table>
+  <thead>
+    <tr>
+      <th onclick="sortBy('name')">Name</th>
+      <th onclick="sortBy('mac')">MAC</th>
+      <th onclick="sortBy('rssi')">RSSI</th>
+      <th onclick="sortBy('age')">Last seen</th>
+    </tr>
+  </thead>
+  <tbody id="tbody"></tbody>
+</table>
+<div id="count"></div>
+
+<script>
+let devices = [];
+let sortKey = 'rssi';
+let sortAsc  = true;
+
+function rssiClass(r) {
+  return r >= -60 ? 'rssi-strong' : r >= -80 ? 'rssi-medium' : 'rssi-weak';
+}
+
+function render() {
+  const sorted = [...devices].sort((a, b) => {
+    let av = a[sortKey], bv = b[sortKey];
+    if (typeof av === 'string') av = av.toLowerCase(), bv = bv.toLowerCase();
+    return sortAsc ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
+  });
+
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = sorted.map(d => {
+    const ef = d.name.startsWith('HW51') || d.name.startsWith('EF-HW');
+    const age = d.age < 5 ? 'now' : d.age + 's ago';
+    return `<tr class="${ef ? 'ecoflow' : ''}">
+      <td>${esc(d.name || '—')}</td>
+      <td>${esc(d.mac)}</td>
+      <td class="${rssiClass(d.rssi)}">${d.rssi} dBm</td>
+      <td>${age}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('count').textContent = sorted.length + ' device(s)';
+}
+
+function esc(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function sortBy(k) {
+  if (sortKey === k) sortAsc = !sortAsc; else { sortKey = k; sortAsc = true; }
+  render();
+}
+
+async function poll() {
+  try {
+    const r = await fetch('/api/devices');
+    devices = await r.json();
+    document.getElementById('status').textContent =
+      'Updated ' + new Date().toLocaleTimeString();
+    render();
+  } catch (e) {
+    document.getElementById('status').textContent = 'Error: ' + e.message;
+  }
+}
+
+poll();
+setInterval(poll, 2000);
+</script>
+</body>
+</html>
