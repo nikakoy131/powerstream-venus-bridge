@@ -1,9 +1,17 @@
 idf_component_register(
     SRCS
         "main.c"
+        "settings.c"
         "wifi_apsta.c"
         "ble_scan.c"
         "http_server.c"
+        "crypto.c"
+        "rawframe.c"
+        "packet.c"
+        "ps_proto.c"
+        "ps_data.c"
+        "sunspec.c"
+        "modbus.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_wifi
@@ -11,6 +19,9 @@ idf_component_register(
         esp_event
         nvs_flash
         esp_http_server
+        esp_timer
+        lwip
         bt
+        mbedtls
         log
 )

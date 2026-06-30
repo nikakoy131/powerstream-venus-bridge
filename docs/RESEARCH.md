@@ -49,6 +49,18 @@ Two possible service pairs (device uses one):
 
 Notifications may be fragmented — must reassemble before parsing.
 
+> **⚠️ CORRECTION (verified on real hardware):** the actual PowerStream tested
+> (`HW51…`) uses **`encrypt_type = 1`, not 7.** The `encrypt_type = 7` flow below
+> (SECP160r1 ECDH + `genSessionKey` + keydata table + `5A5A` EncPacket framing) was
+> never accepted by the device — it stayed silent. The real handshake is far
+> simpler: **no ECDH**, `session_key = MD5(dev_sn)`, `iv = MD5(reversed dev_sn)`,
+> AES-128-CBC, with **RawHeader framing** (plaintext 5-byte inner-packet header +
+> AES-CBC zero-padded body — no `5A5A` wrapper). Just subscribe → send auth_status
+> (`0x35/0x89`) → send auth (`0x35/0x86`, `MD5(user_id+dev_sn)` upper-hex) → stream.
+> `encrypt_type` is read from the advert's `0xB5B5` manufacturer-data
+> `capability_flags` (bits 3–5); the `0xC5C5` stub advert is too short and defaults
+> to 7. See CLAUDE.md § "Milestone 2". The section below is kept for reference only.
+
 ### Handshake sequence (encrypt_type = 7)
 
 ```

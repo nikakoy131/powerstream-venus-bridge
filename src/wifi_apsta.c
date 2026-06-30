@@ -1,5 +1,5 @@
 #include "wifi_apsta.h"
-#include "wifi_secrets.h"
+#include "settings.h"
 #include <string.h>
 #include "esp_log.h"
 #include "esp_wifi.h"
@@ -40,11 +40,13 @@ static void event_handler(void *arg, esp_event_base_t base,
 
 void wifi_apsta_start(void)
 {
+    settings_t scfg = settings_get();
+
     esp_netif_init();
     esp_event_loop_create_default();
     esp_netif_create_default_wifi_ap();
 
-    bool sta_enabled = (strlen(WIFI_STA_SSID) > 0);
+    bool sta_enabled = (strlen(scfg.wifi_ssid) > 0);
     if (sta_enabled)
         esp_netif_create_default_wifi_sta();
 
@@ -72,10 +74,10 @@ void wifi_apsta_start(void)
 
     if (sta_enabled) {
         wifi_config_t sta_cfg = {0};
-        strlcpy((char *)sta_cfg.sta.ssid,     WIFI_STA_SSID, sizeof(sta_cfg.sta.ssid));
-        strlcpy((char *)sta_cfg.sta.password,  WIFI_STA_PASS, sizeof(sta_cfg.sta.password));
+        strlcpy((char *)sta_cfg.sta.ssid,     scfg.wifi_ssid, sizeof(sta_cfg.sta.ssid));
+        strlcpy((char *)sta_cfg.sta.password, scfg.wifi_pass, sizeof(sta_cfg.sta.password));
         esp_wifi_set_config(WIFI_IF_STA, &sta_cfg);
-        ESP_LOGI(TAG, "STA: connecting to '%s'", WIFI_STA_SSID);
+        ESP_LOGI(TAG, "STA: connecting to '%s'", scfg.wifi_ssid);
     }
 
     esp_wifi_start();

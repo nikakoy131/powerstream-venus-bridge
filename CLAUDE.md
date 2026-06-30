@@ -61,13 +61,62 @@ s.close()
 
 Thread safety: BLE callbacks write the device table; HTTP handlers read it. Access is always under `s_mutex` in `ble_scan.c`.
 
-## Next milestones (from docs/RESEARCH.md)
+## Milestone 2 — BLE decode (DONE)
 
-The scanner milestone validates BLE + WiFi coexistence. Subsequent work:
+The bridge connects to the PowerStream, decrypts its protocol, decodes the
+`inverter_heartbeat`, and serves live values at `GET /api/powerstream` + a panel
+in the web UI. Verified streaming live data (PV voltage, temps, load setpoint).
 
-- **BLE connect & handshake** — when a `HW51`/`EF-HW` device is found, switch from observer to central: ECDH key exchange (SECP160r1 via micro-ecc, NOT mbedTLS), `genSessionKey` lookup table, AES-128-CBC session, MD5 auth packet. See `docs/RESEARCH.md` § BLE protocol.
-- **Protobuf decode** — nanopb, `wn511_sys.proto` from ha-ef-ble, `inverter_heartbeat` message.
-- **SunSpec Modbus-TCP server** — port 502, unit ID 126, 152 registers, models 1/101/120. Venus OS `dbus-fronius` auto-detects it.
-- **NVS persistence** — lifetime Wh accumulation.
+**Critical protocol correction:** this PowerStream firmware uses **`encrypt_type = 1`,
+not the `encrypt_type = 7` (SECP160r1 ECDH) path that `docs/RESEARCH.md` assumed.**
+Type 1 has **no ECDH and no `genSessionKey`/keydata table**:
 
-Key external references: [ha-ef-ble](https://github.com/rabits/ha-ef-ble) (BLE protocol), [micro-ecc](https://github.com/kmackay/micro-ecc) (SECP160r1), [nanopb](https://github.com/nanopb/nanopb).
+- `session_key = MD5(dev_sn)`, `iv = MD5(reversed dev_sn)`, AES-128-CBC.
+- Wire framing is **RawHeader** (`src/rawframe.c`), *not* the `5A5A` EncPacket: the
+  inner packet's 5-byte plaintext header (`AA ver lenLE crc8`) + AES-CBC(zero-padded
+  body). No pubkey/key-info exchange — just subscribe → send auth_status
+  (`0x35/0x89`) → send auth (`0x35/0x86`, `MD5(user_id+dev_sn)` upper-hex) → stream.
+- `encrypt_type` came out wrong because the C6's legacy BLE scan only sees the stub
+  `0xC5C5` advert (→ defaults to 7); the real `0xB5B5` advert (seen by BlueZ, and by
+  the C6 in a different DISC event) carries `capability_flags` (→ type 1) and the
+  full 16-char serial. We now parse the serial from the `0xB5B5` advert.
+
+**Multi-device:** the full serial is auto-detected from each unit's `0xB5B5`
+advert (`store_serial`/`lookup_serial` in `ble_scan.c`), so any PowerStream on the
+account works with no per-device config.
+
+**Runtime config (no hardcoded secrets):** WiFi STA credentials and the EcoFlow
+`user_id` are stored in NVS and edited from the web UI **Settings** tab
+(`settings.c`, `GET`/`POST /api/settings`; saving reboots). The gitignored headers
+`wifi_secrets.h` / `ps_config.h` are *optional* dev seeds pulled in via
+`__has_include` — a fresh checkout builds without them (AP-only until configured).
+On first boot with no WiFi set, connect to the `PowerStream-Bridge` AP
+(`192.168.4.1`) and configure.
+
+**Module map:** `crypto.c` (MD5/AES-CBC/CRC16-ARC/CRC8), `rawframe.c` (type-1
+framing + reassembly), `packet.c` (inner V2/V3 packet, seq[0] XOR unmask, sentinel),
+`ps_proto.c` (hand-rolled `inverter_heartbeat` walker, field numbers in the file),
+`ps_data.c` (latest values behind a mutex + JSON). The BLE central + handshake
+state machine lives in `ble_scan.c`. The device allows **one BLE connection** at a
+time, so the bridge competes with the EcoFlow phone app for the slot.
+
+## Milestone 3 — SunSpec Modbus-TCP (DONE, pending Venus verification)
+
+`sunspec.c` builds the 152-register map (SunS marker, models 1/101/120, end
+marker) and `sunspec_update()` refreshes model 101 from the latest heartbeat with
+correct SF scaling (A_SF=-3, V/W/Hz/DC/Tmp_SF=-1). `modbus.c` is a minimal
+Modbus-TCP server on port 502 (FC3 only, unit id 126) started from `main.c`.
+PV voltage maps to the model-101 **DCV** register. Verified end-to-end with a host
+Modbus client (correct marker, model headers, lengths, live values). **Not yet
+confirmed against a real Cerbo GX** — that's the remaining acceptance test.
+
+Lifetime Wh is accumulated in RAM (`s_wh_accum` in `sunspec.c`) and resets on
+reboot.
+
+## Remaining milestones
+
+- **Venus OS acceptance** — confirm `dbus-fronius` auto-detects the device as
+  `com.victronenergy.pvinverter` on a real Cerbo GX.
+- **NVS persistence** — persist lifetime Wh across reboots.
+
+Key external references: [ha-ef-ble](https://github.com/rabits/ha-ef-ble) (BLE protocol; note its `encrypt_type` is read from the advert's `capability_flags`), [nanopb](https://github.com/nanopb/nanopb).
