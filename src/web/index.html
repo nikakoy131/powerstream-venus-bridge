@@ -3,10 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>BLE Scanner — PowerStream Bridge</title>
+<title>PowerStream Bridge</title>
 <style>
   body { font-family: monospace; background: #111; color: #ddd; margin: 2rem; }
   h1   { color: #4af; margin-bottom: 0.3rem; }
+  h2   { color: #4af; font-size: 1rem; margin: 1.5rem 0 0.5rem; }
   #status { font-size: 0.8rem; color: #888; margin-bottom: 1rem; }
   table  { border-collapse: collapse; width: 100%; }
   th, td { border: 1px solid #333; padding: 0.4rem 0.8rem; text-align: left; }
@@ -18,11 +19,50 @@
   .rssi-medium { color: #fa0; }
   .rssi-weak   { color: #f44; }
   #count { font-size: 0.85rem; color: #888; margin-top: 0.5rem; }
+  #ps { border: 1px solid #2a4; border-radius: 6px; padding: 1rem; background: #141a14; }
+  .badge { display: inline-block; padding: 0.1rem 0.6rem; border-radius: 4px;
+           background: #333; color: #adf; font-weight: bold; }
+  .badge.streaming { background: #1a4a1a; color: #6f6; }
+  .badge.scanning, .badge.disconnected { background: #4a2a1a; color: #fa0; }
+  .psmeta { font-size: 0.8rem; color: #888; margin: 0.4rem 0 0.8rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+          gap: 0.6rem; }
+  .card { border: 1px solid #2a3a2a; border-radius: 5px; padding: 0.6rem; }
+  .card h3 { margin: 0 0 0.4rem; font-size: 0.8rem; color: #8cf; }
+  .card .row { display: flex; justify-content: space-between; font-size: 0.85rem; }
+  .card .row span:last-child { color: #fff; }
+  .dim { opacity: 0.4; }
+  .tabs { margin: 0.5rem 0 1rem; }
+  .tabs button { background: #222; color: #adf; border: 1px solid #333;
+                 padding: 0.4rem 1rem; cursor: pointer; font-family: monospace; }
+  .tabs button.active { background: #1a2a3a; color: #fff; }
+  form label { display: block; margin: 0.8rem 0 0.2rem; color: #8cf; font-size: 0.85rem; }
+  form input { width: 100%; max-width: 360px; padding: 0.4rem; background: #181818;
+               color: #ddd; border: 1px solid #333; font-family: monospace; box-sizing: border-box; }
+  form button { margin-top: 1.2rem; padding: 0.5rem 1.2rem; background: #1a4a1a;
+                color: #6f6; border: 1px solid #2a5a2a; cursor: pointer; font-family: monospace; }
+  .hint { font-size: 0.75rem; color: #777; margin-top: 0.2rem; }
+  .hint a { color: #4af; }
+  #setmsg { margin-top: 1rem; color: #fa0; }
 </style>
 </head>
 <body>
-<h1>BLE Scanner</h1>
+<h1>PowerStream Bridge</h1>
+<div class="tabs">
+  <button id="tb-dash" class="active" onclick="showTab('dash')">Dashboard</button>
+  <button id="tb-set" onclick="showTab('set')">Settings</button>
+</div>
+
+<div id="tab-dash">
 <div id="status">Connecting…</div>
+
+<div id="ps">
+  <div><span id="psstate" class="badge">—</span></div>
+  <div class="psmeta" id="psmeta"></div>
+  <div class="grid" id="psgrid"></div>
+</div>
+
+<h2>BLE Scan</h2>
 <table>
   <thead>
     <tr>
@@ -35,14 +75,66 @@
   <tbody id="tbody"></tbody>
 </table>
 <div id="count"></div>
+</div><!-- /tab-dash -->
+
+<div id="tab-set" hidden>
+  <form id="setform" onsubmit="return saveSettings(event)">
+    <label>WiFi network (STA SSID)</label>
+    <input id="f-ssid" name="wifi_ssid" autocomplete="off" placeholder="leave blank for AP-only">
+    <label>WiFi password</label>
+    <input id="f-pass" name="wifi_pass" type="password" autocomplete="off" placeholder="unchanged">
+    <div class="hint">Leave blank to keep the current password.</div>
+    <label>EcoFlow account user_id</label>
+    <input id="f-uid" name="user_id" autocomplete="off" placeholder="optional — for BLE auth">
+    <div class="hint">PowerStream serials are auto-detected; only the account user_id may be needed.
+      Find yours at <a href="https://gnox.github.io/user_id" target="_blank" rel="noopener">gnox.github.io/user_id</a>
+      (enter your EcoFlow login once — it's used only to query the API and is not stored).</div>
+    <button type="submit">Save &amp; reboot</button>
+    <div id="setmsg"></div>
+  </form>
+</div><!-- /tab-set -->
 
 <script>
 let devices = [];
 let sortKey = 'rssi';
 let sortAsc  = true;
 
+function showTab(t) {
+  document.getElementById('tab-dash').hidden = t !== 'dash';
+  document.getElementById('tab-set').hidden = t !== 'set';
+  document.getElementById('tb-dash').classList.toggle('active', t === 'dash');
+  document.getElementById('tb-set').classList.toggle('active', t === 'set');
+  if (t === 'set') loadSettings();
+}
+
+async function loadSettings() {
+  try {
+    const s = await fetch('/api/settings').then(r => r.json());
+    document.getElementById('f-ssid').value = s.wifi_ssid || '';
+    document.getElementById('f-uid').value = s.user_id || '';
+    document.getElementById('f-pass').placeholder = s.wifi_pass_set ? 'unchanged' : '(none set)';
+  } catch (e) {}
+}
+
+async function saveSettings(ev) {
+  ev.preventDefault();
+  const body = new URLSearchParams(new FormData(document.getElementById('setform'))).toString();
+  document.getElementById('setmsg').textContent = 'Saving…';
+  try {
+    await fetch('/api/settings', { method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+  } catch (e) {}
+  document.getElementById('setmsg').textContent =
+    'Saved. Device is rebooting — reconnect in ~10 s (new IP if WiFi changed).';
+  return false;
+}
+
 function rssiClass(r) {
   return r >= -60 ? 'rssi-strong' : r >= -80 ? 'rssi-medium' : 'rssi-weak';
+}
+
+function esc(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 function render() {
@@ -51,7 +143,6 @@ function render() {
     if (typeof av === 'string') av = av.toLowerCase(), bv = bv.toLowerCase();
     return sortAsc ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
   });
-
   const tbody = document.getElementById('tbody');
   tbody.innerHTML = sorted.map(d => {
     const ef = d.name.startsWith('HW51') || d.name.startsWith('EF-HW');
@@ -66,22 +157,73 @@ function render() {
   document.getElementById('count').textContent = sorted.length + ' device(s)';
 }
 
-function esc(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
 function sortBy(k) {
   if (sortKey === k) sortAsc = !sortAsc; else { sortKey = k; sortAsc = true; }
   render();
 }
 
+function row(label, val, unit) {
+  return `<div class="row"><span>${label}</span><span>${val}${unit}</span></div>`;
+}
+function f(raw, div, dec) { return (raw / div).toFixed(dec); }
+
+function renderPS(d) {
+  const st = document.getElementById('psstate');
+  st.textContent = d.state;
+  st.className = 'badge ' + d.state;
+
+  let meta = '';
+  if (d.device) meta += d.device + '  ';
+  if (d.mac) meta += d.mac + '  ';
+  if (d.rssi) meta += d.rssi + ' dBm  ';
+  if (d.valid) meta += '• ' + d.count + ' heartbeats, last ' +
+                       (d.age < 5 ? 'now' : d.age + 's ago');
+  document.getElementById('psmeta').textContent = meta;
+
+  const grid = document.getElementById('psgrid');
+  if (!d.valid) {
+    grid.innerHTML = '<div class="card dim">Waiting for first heartbeat…</div>';
+    return;
+  }
+  const inv = d.inv, pv1 = d.pv1, pv2 = d.pv2, bat = d.bat;
+  grid.innerHTML =
+    `<div class="card"><h3>Inverter (AC out)</h3>
+       ${row('Power', f(inv.w,10,1), ' W')}
+       ${row('Voltage', f(inv.v,10,1), ' V')}
+       ${row('Current', f(inv.a,1000,2), ' A')}
+       ${row('Frequency', f(inv.hz,10,1), ' Hz')}
+       ${row('Temp', f(inv.t,10,1), ' °C')}</div>
+     <div class="card"><h3>PV1</h3>
+       ${row('Power', f(pv1.w,10,1), ' W')}
+       ${row('Voltage', f(pv1.v,10,1), ' V')}
+       ${row('Current', f(pv1.a,10,1), ' A')}
+       ${row('Temp', f(pv1.t,10,1), ' °C')}</div>
+     <div class="card"><h3>PV2</h3>
+       ${row('Power', f(pv2.w,10,1), ' W')}
+       ${row('Voltage', f(pv2.v,10,1), ' V')}
+       ${row('Current', f(pv2.a,10,1), ' A')}
+       ${row('Temp', f(pv2.t,10,1), ' °C')}</div>
+     <div class="card"><h3>Battery</h3>
+       ${row('Power', f(bat.w,10,1), ' W')}
+       ${row('SOC', bat.soc, ' %')}
+       ${row('Temp', f(bat.t,10,1), ' °C')}</div>
+     <div class="card"><h3>Other</h3>
+       ${row('Load set', f(d.load_w,10,1), ' W')}
+       ${row('LLC temp', f(d.llc_t,10,1), ' °C')}
+       ${row('Limit', d.limit_lo + '–' + d.limit_hi, ' %')}</div>`;
+}
+
 async function poll() {
   try {
-    const r = await fetch('/api/devices');
-    devices = await r.json();
+    const [dev, ps] = await Promise.all([
+      fetch('/api/devices').then(r => r.json()),
+      fetch('/api/powerstream').then(r => r.json()),
+    ]);
+    devices = dev;
+    renderPS(ps);
+    render();
     document.getElementById('status').textContent =
       'Updated ' + new Date().toLocaleTimeString();
-    render();
   } catch (e) {
     document.getElementById('status').textContent = 'Error: ' + e.message;
   }

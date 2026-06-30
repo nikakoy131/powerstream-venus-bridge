@@ -18,6 +18,7 @@ src/proto/*.pb.h
 
 # Secrets
 src/wifi_secrets.h
+src/ps_config.h
 
 # macOS
 .DS_Store

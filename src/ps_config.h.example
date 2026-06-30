@@ -1,0 +1,13 @@
+#pragma once
+
+/* OPTIONAL dev seed for the EcoFlow account user_id.
+
+   Settings are normally configured at runtime from the web UI (Settings tab,
+   stored in NVS) — you do NOT need this file. It only exists as a convenience:
+   if present (copy to ps_config.h, gitignored), PS_USER_ID seeds the NVS value
+   on first boot so a dev board authenticates without manual setup.
+
+   The BLE auth packet is MD5(PS_USER_ID + dev_sn).hexdigest().upper(); the
+   device serial (dev_sn) is auto-detected from each PowerStream's advertisement,
+   so it is never configured here. */
+#define PS_USER_ID ""
