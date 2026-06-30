@@ -45,6 +45,7 @@ static const char INDEX_HTML[] =
 "  form button { margin-top: 1.2rem; padding: 0.5rem 1.2rem; background: #1a4a1a;\n"
 "                color: #6f6; border: 1px solid #2a5a2a; cursor: pointer; font-family: monospace; }\n"
 "  .hint { font-size: 0.75rem; color: #777; margin-top: 0.2rem; }\n"
+"  .hint a { color: #4af; }\n"
 "  #setmsg { margin-top: 1rem; color: #fa0; }\n"
 "</style>\n"
 "</head>\n"
@@ -88,7 +89,9 @@ static const char INDEX_HTML[] =
 "    <div class=\"hint\">Leave blank to keep the current password.</div>\n"
 "    <label>EcoFlow account user_id</label>\n"
 "    <input id=\"f-uid\" name=\"user_id\" autocomplete=\"off\" placeholder=\"optional — for BLE auth\">\n"
-"    <div class=\"hint\">PowerStream serials are auto-detected; only the account user_id may be needed.</div>\n"
+"    <div class=\"hint\">PowerStream serials are auto-detected; only the account user_id may be needed.\n"
+"      Find yours at <a href=\"https://gnox.github.io/user_id\" target=\"_blank\" rel=\"noopener\">gnox.github.io/user_id</a>\n"
+"      (enter your EcoFlow login once — it's used only to query the API and is not stored).</div>\n"
 "    <button type=\"submit\">Save &amp; reboot</button>\n"
 "    <div id=\"setmsg\"></div>\n"
 "  </form>\n"
@@ -233,4 +236,5 @@ static const char INDEX_HTML[] =
 "setInterval(poll, 2000);\n"
 "</script>\n"
 "</body>\n"
-"</html>\n";
+"</html>\n"
+;
