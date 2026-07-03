@@ -105,7 +105,7 @@ static esp_err_t status_handler(httpd_req_t *req)
              "\"ip\":\"%s\",\"rssi\":%d,\"retries\":%d},"
              "\"ap\":{\"ssid\":\"PowerStream-Bridge\",\"ip\":\"192.168.4.1\","
              "\"clients\":%d}}",
-             esp_timer_get_time() / 1000000,
+             (long long)(esp_timer_get_time() / 1000000),
              (unsigned long)esp_get_free_heap_size(),
              w.sta_enabled ? "true" : "false",
              w.sta_connected ? "true" : "false",

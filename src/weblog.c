@@ -6,7 +6,7 @@
 #include "freertos/semphr.h"
 
 #define LOG_BUF_SIZE 8192
-#define LINE_MAX     256
+#define WEBLOG_LINE_MAX 256
 
 static char s_buf[LOG_BUF_SIZE];
 static size_t s_head;           /* next write position */
@@ -27,7 +27,7 @@ static void ring_put(const char *data, size_t n)
 
 static int weblog_vprintf(const char *fmt, va_list args)
 {
-    char line[LINE_MAX];
+    char line[WEBLOG_LINE_MAX];
     va_list copy;
     va_copy(copy, args);
     int n = vsnprintf(line, sizeof(line), fmt, copy);
