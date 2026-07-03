@@ -21,6 +21,7 @@ idf_component_register(
         nvs_flash
         esp_http_server
         esp_timer
+        app_update
         lwip
         bt
         mbedtls
