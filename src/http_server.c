@@ -9,6 +9,7 @@
 #include "esp_http_server.h"
 #include "esp_timer.h"
 #include "esp_system.h"
+#include "esp_ota_ops.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -140,6 +141,75 @@ static esp_err_t settings_get_handler(httpd_req_t *req)
 
 static void reboot_cb(void *arg) { (void)arg; esp_restart(); }
 
+static void schedule_reboot(void)
+{
+    const esp_timer_create_args_t a = { .callback = reboot_cb, .name = "reboot" };
+    esp_timer_handle_t t;
+    esp_timer_create(&a, &t);
+    esp_timer_start_once(t, 1500 * 1000);
+}
+
+/* Flash-over-WiFi: POST the raw app image, e.g.
+     curl --data-binary @firmware.bin http://powerstream-bridge.lan/api/ota */
+static esp_err_t ota_post_handler(httpd_req_t *req)
+{
+    const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);
+    int total = req->content_len;
+    if (!part || total <= 0 || total > (int)part->size) {
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"ok\":false,\"err\":\"bad image size\"}");
+        return ESP_OK;
+    }
+    ESP_LOGI(TAG, "OTA start: %d bytes -> %s", total, part->label);
+
+    esp_ota_handle_t ota;
+    esp_err_t err = esp_ota_begin(part, OTA_WITH_SEQUENTIAL_WRITES, &ota);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_begin: %s", esp_err_to_name(err));
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_sendstr(req, "{\"ok\":false,\"err\":\"ota_begin\"}");
+        return ESP_OK;
+    }
+
+    static char buf[4096];   /* httpd task stack is small; keep this off it */
+    int recvd = 0;
+    while (recvd < total) {
+        int want = total - recvd;
+        if (want > (int)sizeof(buf)) want = sizeof(buf);
+        int r = httpd_req_recv(req, buf, want);
+        if (r <= 0) {
+            esp_ota_abort(ota);
+            ESP_LOGE(TAG, "OTA recv failed at %d/%d", recvd, total);
+            return ESP_FAIL;
+        }
+        err = esp_ota_write(ota, buf, r);
+        if (err != ESP_OK) {
+            esp_ota_abort(ota);
+            ESP_LOGE(TAG, "esp_ota_write: %s", esp_err_to_name(err));
+            httpd_resp_set_status(req, "500 Internal Server Error");
+            httpd_resp_sendstr(req, "{\"ok\":false,\"err\":\"flash write\"}");
+            return ESP_OK;
+        }
+        recvd += r;
+    }
+
+    err = esp_ota_end(ota);   /* validates image magic + checksum */
+    if (err == ESP_OK)
+        err = esp_ota_set_boot_partition(part);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "OTA finish: %s", esp_err_to_name(err));
+        httpd_resp_set_status(req, "400 Bad Request");
+        httpd_resp_sendstr(req, "{\"ok\":false,\"err\":\"invalid image\"}");
+        return ESP_OK;
+    }
+
+    ESP_LOGI(TAG, "OTA OK (%d bytes), rebooting into %s", recvd, part->label);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, "{\"ok\":true,\"rebooting\":true}");
+    schedule_reboot();
+    return ESP_OK;
+}
+
 static esp_err_t settings_post_handler(httpd_req_t *req)
 {
     char body[512];
@@ -172,10 +242,7 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
     httpd_resp_sendstr(req, "{\"ok\":true,\"rebooting\":true}");
 
     ESP_LOGI(TAG, "settings saved, rebooting");
-    const esp_timer_create_args_t a = { .callback = reboot_cb, .name = "reboot" };
-    esp_timer_handle_t t;
-    esp_timer_create(&a, &t);
-    esp_timer_start_once(t, 1500 * 1000);
+    schedule_reboot();
     return ESP_OK;
 }
 
@@ -196,6 +263,7 @@ void http_server_start(void)
     httpd_uri_t spost= { .uri = "/api/settings", .method = HTTP_POST, .handler = settings_post_handler };
     httpd_uri_t stat = { .uri = "/api/status", .method = HTTP_GET, .handler = status_handler };
     httpd_uri_t wlog = { .uri = "/api/log", .method = HTTP_GET, .handler = log_handler };
+    httpd_uri_t ota  = { .uri = "/api/ota", .method = HTTP_POST, .handler = ota_post_handler };
     httpd_register_uri_handler(server, &root);
     httpd_register_uri_handler(server, &api);
     httpd_register_uri_handler(server, &ps);
@@ -203,5 +271,6 @@ void http_server_start(void)
     httpd_register_uri_handler(server, &spost);
     httpd_register_uri_handler(server, &stat);
     httpd_register_uri_handler(server, &wlog);
+    httpd_register_uri_handler(server, &ota);
     ESP_LOGI(TAG, "HTTP server started on port 80");
 }
