@@ -2,6 +2,8 @@
 #include "ble_scan.h"
 #include "ps_data.h"
 #include "settings.h"
+#include "wifi_apsta.h"
+#include "weblog.h"
 #include "index_html.h"
 #include "esp_log.h"
 #include "esp_http_server.h"
@@ -88,6 +90,40 @@ static bool form_get(const char *body, const char *key, char *out, int outlen)
     return false;
 }
 
+static esp_err_t status_handler(httpd_req_t *req)
+{
+    wifi_status_t w;
+    wifi_apsta_get_status(&w);
+    char ssid[80], buf[384];
+    json_esc(ssid, sizeof(ssid), w.sta_ssid);
+    snprintf(buf, sizeof(buf),
+             "{\"hostname\":\"" WIFI_HOSTNAME "\","
+             "\"uptime_s\":%lld,"
+             "\"heap_free\":%lu,"
+             "\"sta\":{\"enabled\":%s,\"connected\":%s,\"ssid\":\"%s\","
+             "\"ip\":\"%s\",\"rssi\":%d,\"retries\":%d},"
+             "\"ap\":{\"ssid\":\"PowerStream-Bridge\",\"ip\":\"192.168.4.1\","
+             "\"clients\":%d}}",
+             esp_timer_get_time() / 1000000,
+             (unsigned long)esp_get_free_heap_size(),
+             w.sta_enabled ? "true" : "false",
+             w.sta_connected ? "true" : "false",
+             ssid, w.sta_ip, w.sta_rssi, w.retry_count,
+             w.ap_clients);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, buf);
+    return ESP_OK;
+}
+
+static esp_err_t log_handler(httpd_req_t *req)
+{
+    static char buf[8192 + 1];
+    weblog_read(buf, sizeof(buf));
+    httpd_resp_set_type(req, "text/plain");
+    httpd_resp_sendstr(req, buf);
+    return ESP_OK;
+}
+
 static esp_err_t settings_get_handler(httpd_req_t *req)
 {
     settings_t cfg = settings_get();
@@ -146,7 +182,7 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
 void http_server_start(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 8;
+    cfg.max_uri_handlers = 10;
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &cfg) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start HTTP server");
@@ -158,10 +194,14 @@ void http_server_start(void)
     httpd_uri_t ps   = { .uri = "/api/powerstream", .method = HTTP_GET, .handler = powerstream_handler };
     httpd_uri_t sget = { .uri = "/api/settings", .method = HTTP_GET, .handler = settings_get_handler };
     httpd_uri_t spost= { .uri = "/api/settings", .method = HTTP_POST, .handler = settings_post_handler };
+    httpd_uri_t stat = { .uri = "/api/status", .method = HTTP_GET, .handler = status_handler };
+    httpd_uri_t wlog = { .uri = "/api/log", .method = HTTP_GET, .handler = log_handler };
     httpd_register_uri_handler(server, &root);
     httpd_register_uri_handler(server, &api);
     httpd_register_uri_handler(server, &ps);
     httpd_register_uri_handler(server, &sget);
     httpd_register_uri_handler(server, &spost);
+    httpd_register_uri_handler(server, &stat);
+    httpd_register_uri_handler(server, &wlog);
     ESP_LOGI(TAG, "HTTP server started on port 80");
 }
