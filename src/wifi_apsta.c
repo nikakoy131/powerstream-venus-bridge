@@ -5,6 +5,7 @@
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include "esp_event.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
 
 #define AP_SSID     "PowerStream-Bridge"
@@ -12,23 +13,45 @@
 #define AP_CHANNEL  1
 #define AP_MAX_STA  4
 
+/* Retry immediately a few times, then keep trying forever every RETRY_SLOW_MS.
+   The old firmware gave up after 5 attempts and stayed offline until reboot. */
+#define RETRY_FAST      5
+#define RETRY_SLOW_MS   10000
+
 static const char *TAG = "wifi";
 static int s_retry = 0;
-#define MAX_RETRY 5
+static bool s_got_ip = false;
+static char s_ip[16] = "0.0.0.0";
+static esp_timer_handle_t s_retry_timer;
+
+static void retry_cb(void *arg)
+{
+    (void)arg;
+    ESP_LOGI(TAG, "STA reconnecting (attempt %d)", s_retry);
+    esp_wifi_connect();
+}
 
 static void event_handler(void *arg, esp_event_base_t base,
                           int32_t id, void *data)
 {
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (s_retry < MAX_RETRY) {
+        s_got_ip = false;
+        strlcpy(s_ip, "0.0.0.0", sizeof(s_ip));
+        s_retry++;
+        if (s_retry <= RETRY_FAST) {
+            ESP_LOGI(TAG, "STA reconnecting (%d)", s_retry);
             esp_wifi_connect();
-            s_retry++;
-            ESP_LOGI(TAG, "STA reconnecting (%d/%d)", s_retry, MAX_RETRY);
+        } else if (!esp_timer_is_active(s_retry_timer)) {
+            ESP_LOGW(TAG, "STA down, retrying every %d s", RETRY_SLOW_MS / 1000);
+            esp_timer_start_periodic(s_retry_timer, (uint64_t)RETRY_SLOW_MS * 1000);
         }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
-        ESP_LOGI(TAG, "STA got IP: " IPSTR, IP2STR(&e->ip_info.ip));
+        snprintf(s_ip, sizeof(s_ip), IPSTR, IP2STR(&e->ip_info.ip));
+        ESP_LOGI(TAG, "STA got IP: %s (hostname: %s)", s_ip, WIFI_HOSTNAME);
+        esp_timer_stop(s_retry_timer);
         s_retry = 0;
+        s_got_ip = true;
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_START) {
         ESP_LOGI(TAG, "AP started — SSID: %s  IP: 192.168.4.1", AP_SSID);
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STACONNECTED) {
@@ -44,11 +67,19 @@ void wifi_apsta_start(void)
 
     esp_netif_init();
     esp_event_loop_create_default();
-    esp_netif_create_default_wifi_ap();
+    esp_netif_t *ap_netif = esp_netif_create_default_wifi_ap();
+    esp_netif_set_hostname(ap_netif, WIFI_HOSTNAME);
 
     bool sta_enabled = (strlen(scfg.wifi_ssid) > 0);
-    if (sta_enabled)
-        esp_netif_create_default_wifi_sta();
+    if (sta_enabled) {
+        esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
+        esp_netif_set_hostname(sta_netif, WIFI_HOSTNAME);
+    }
+
+    const esp_timer_create_args_t targs = {
+        .callback = retry_cb, .name = "wifi_retry",
+    };
+    esp_timer_create(&targs, &s_retry_timer);
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     esp_wifi_init(&cfg);
@@ -81,6 +112,35 @@ void wifi_apsta_start(void)
     }
 
     esp_wifi_start();
+
+    /* BLE coexistence forces modem power-save, which makes the STA sleep
+       through broadcast ARP requests — the device then looks unreachable to
+       any host that doesn't already have its MAC cached. Trade power for
+       reachability. */
+    esp_err_t pe = esp_wifi_set_ps(WIFI_PS_NONE);
+    if (pe != ESP_OK)
+        ESP_LOGW(TAG, "esp_wifi_set_ps(NONE) failed: %s", esp_err_to_name(pe));
+
     if (sta_enabled)
         esp_wifi_connect();
+}
+
+void wifi_apsta_get_status(wifi_status_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    settings_t scfg = settings_get();
+    out->sta_enabled = (strlen(scfg.wifi_ssid) > 0);
+    strlcpy(out->sta_ssid, scfg.wifi_ssid, sizeof(out->sta_ssid));
+    out->sta_connected = s_got_ip;
+    strlcpy(out->sta_ip, s_ip, sizeof(out->sta_ip));
+    out->retry_count = s_retry;
+
+    if (s_got_ip) {
+        wifi_ap_record_t ap;
+        if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK)
+            out->sta_rssi = ap.rssi;
+    }
+    wifi_sta_list_t stas;
+    if (esp_wifi_ap_get_sta_list(&stas) == ESP_OK)
+        out->ap_clients = stas.num;
 }

@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS
         "main.c"
+        "weblog.c"
         "settings.c"
         "wifi_apsta.c"
         "ble_scan.c"
