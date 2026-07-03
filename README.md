@@ -77,6 +77,30 @@ s.close()
 No secrets are baked into the build — a fresh checkout builds and runs as-is, then is
 configured at runtime (see below).
 
+## Flashing over WiFi (OTA)
+
+Once a device is on your network, you don't need the USB cable for every update — the
+bridge accepts new firmware over HTTP:
+
+```bash
+pio run                     # build firmware.bin
+curl --data-binary @.pio/build/esp32-c6-devkitc-1/firmware.bin http://<bridge-ip>/api/ota
+```
+
+Or from the web UI: **Settings** tab → **Firmware update** → pick `firmware.bin` →
+**Flash & reboot**.
+
+The device validates the image and reboots into it; saved WiFi/user_id settings are
+untouched. If the upload is rejected or the device doesn't come back, fall back to a USB
+flash (`pio run -t upload`) — there's no automatic rollback if a bad image boots but never
+comes up on WiFi.
+
+> **One-time requirement:** OTA needs a two-slot partition table
+> (`partitions_ota.csv`, already the default in `platformio.ini`). If you're updating a
+> device that was flashed before OTA support existed (single-app partition table), that
+> first update **must** be done over USB (`pio run -t upload`) to switch partition
+> layouts. Every update after that can go over WiFi.
+
 ## First-time setup / how to connect
 
 1. **Flash** the firmware (above).
@@ -88,9 +112,14 @@ configured at runtime (see below).
    - **WiFi network (STA SSID)** + password — your home/LAN WiFi, so the bridge joins
      the same network as your Cerbo GX. (Leave blank to stay AP-only.)
    - **EcoFlow account user_id** — needed for BLE authentication (see below).
-4. Save & reboot. The bridge joins your WiFi; find its new IP from your router (or it
-   logs the IP on serial). Open `http://<that-ip>/` — the **Dashboard** shows the BLE
-   scan and, once connected and authenticated, live PowerStream values.
+4. Save & reboot. The bridge joins your WiFi and registers the DHCP hostname
+   `powerstream-bridge` — find its new IP from your router's DHCP lease list (look for
+   that name), or via serial. (No mDNS/`.local` support yet — DHCP hostname only, so it
+   won't resolve by name unless your router does DNS registration from DHCP leases.)
+   Open `http://<that-ip>/` — the **Dashboard** shows the BLE scan and, once connected
+   and authenticated, live PowerStream values. The **Status** tab shows WiFi connection
+   state (useful if the bridge ever drops off WiFi), and the **Log** tab streams the
+   device's log output without needing a serial cable.
 5. **Venus OS**: ensure the Cerbo GX is on the same network. `dbus-fronius` scans for
    SunSpec devices automatically; the PowerStream should appear as a PV inverter
    (`com.victronenergy.pvinverter`). If auto-detection is off, enable Modbus-TCP device
