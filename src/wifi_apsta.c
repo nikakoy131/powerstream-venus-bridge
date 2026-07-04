@@ -31,10 +31,21 @@ static void retry_cb(void *arg)
     esp_wifi_connect();
 }
 
+static esp_netif_t *s_sta_netif;
+
 static void event_handler(void *arg, esp_event_base_t base,
                           int32_t id, void *data)
 {
-    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
+        /* The netif must be started before the hostname can be set (calling
+           earlier fails with IF_NOT_READY and the DHCP client then sends
+           lwIP's default "espressif"). DHCP starts on association, so setting
+           it here is early enough. */
+        esp_err_t e = esp_netif_set_hostname(s_sta_netif, WIFI_HOSTNAME);
+        if (e != ESP_OK)
+            ESP_LOGW(TAG, "set_hostname failed: %s", esp_err_to_name(e));
+        esp_wifi_connect();
+    } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         s_got_ip = false;
         strlcpy(s_ip, "0.0.0.0", sizeof(s_ip));
         s_retry++;
@@ -67,14 +78,11 @@ void wifi_apsta_start(void)
 
     esp_netif_init();
     esp_event_loop_create_default();
-    esp_netif_t *ap_netif = esp_netif_create_default_wifi_ap();
-    esp_netif_set_hostname(ap_netif, WIFI_HOSTNAME);
+    esp_netif_create_default_wifi_ap();
 
     bool sta_enabled = (strlen(scfg.wifi_ssid) > 0);
-    if (sta_enabled) {
-        esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
-        esp_netif_set_hostname(sta_netif, WIFI_HOSTNAME);
-    }
+    if (sta_enabled)
+        s_sta_netif = esp_netif_create_default_wifi_sta();
 
     const esp_timer_create_args_t targs = {
         .callback = retry_cb, .name = "wifi_retry",
@@ -121,8 +129,8 @@ void wifi_apsta_start(void)
     if (pe != ESP_OK)
         ESP_LOGW(TAG, "esp_wifi_set_ps(NONE) failed: %s", esp_err_to_name(pe));
 
-    if (sta_enabled)
-        esp_wifi_connect();
+    /* esp_wifi_connect() happens in the WIFI_EVENT_STA_START handler, after
+       the hostname is set. */
 }
 
 void wifi_apsta_get_status(wifi_status_t *out)
