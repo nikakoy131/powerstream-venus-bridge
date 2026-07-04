@@ -250,6 +250,10 @@ void http_server_start(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.max_uri_handlers = 10;
+    /* Purge idle connections instead of refusing new ones once the socket
+       pool (7) fills up — stale keep-alive sessions otherwise wedge the
+       server into "accept error 23" (ENFILE) until reboot. */
+    cfg.lru_purge_enable = true;
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &cfg) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start HTTP server");
