@@ -128,6 +128,24 @@ comes up on WiFi.
    (`com.victronenergy.pvinverter`). If auto-detection is off, enable Modbus-TCP device
    scanning in the Cerbo GX settings.
 
+### Access point settings
+
+The config AP (`PowerStream-Bridge` / `powerstream` by default) is configurable from
+the **Settings** tab:
+
+- **AP name / password** — rename the AP or set your own WPA2 password (8+
+  characters). Checking **remove password** makes it an open network.
+- **AP enabled** — once the bridge is on your WiFi you can disable the AP entirely.
+  This is safe: if the configured WiFi ever becomes unreachable (changed router
+  password, network gone), the AP comes back automatically after ~1 minute of failed
+  reconnects (the Status tab then shows it as *fallback*) and turns off again once
+  the WiFi connection succeeds. With no WiFi configured the AP always runs,
+  regardless of this switch.
+
+Last-resort recovery (wrong AP password saved and no WiFi): reflash over USB with
+`pio run -t erase -t upload` — erasing flash clears the saved settings (NVS) and
+restores the default AP.
+
 ## Troubleshooting
 
 ### Bridge gets an IP but other WiFi clients can't reach it
