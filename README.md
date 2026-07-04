@@ -125,6 +125,45 @@ comes up on WiFi.
    (`com.victronenergy.pvinverter`). If auto-detection is off, enable Modbus-TCP device
    scanning in the Cerbo GX settings.
 
+## Troubleshooting
+
+### Bridge gets an IP but other WiFi clients can't reach it
+
+Symptom fingerprint: the bridge shows up in the router's DHCP leases and the
+**router itself** can ping it and fetch `http://<bridge-ip>/api/status` — but
+other **wireless** clients (laptop, phone, the Cerbo GX on WiFi) get timeouts,
+and their ARP tables show the bridge's IP as `(incomplete)`. Wired clients may
+work fine.
+
+This is usually not the bridge's fault. Two distinct causes seen in practice:
+
+1. **BLE starving WiFi on the ESP32** (fixed in this firmware): with the
+   default NimBLE connection interval the BLE link occupied the shared 2.4 GHz
+   radio 20–30×/s and the WiFi STA went tens of seconds without traffic. The
+   firmware now forces a 400 ms BLE connection interval (and re-asserts it when
+   the PowerStream tries to renegotiate), which leaves plenty of airtime for
+   WiFi.
+
+2. **The WiFi AP not delivering relayed broadcasts** (router-side): some AP
+   drivers — notably `wcn36xx` on Qualcomm MSM8916-based OpenWrt devices —
+   deliver relayed *unicast* frames between wireless clients but silently drop
+   relayed *broadcast* frames. ARP requests are broadcasts, so no wireless
+   client can ever resolve another's MAC (both directions break: the bridge's
+   ARP replies to a client fail the same way). Look for
+   `wcn36xx: ERROR HAL_8023_MULTICAST_LIST rsp failed` in the router's `dmesg`.
+   Fix on OpenWrt — convert broadcasts to per-station unicast, which the driver
+   delivers correctly:
+
+   ```sh
+   uci set wireless.<your-ap-iface>.multicast_to_unicast='1'
+   uci commit wireless
+   wifi reload
+   ```
+
+   Quick differential test: if `ping` between two *other* wireless clients
+   (e.g. laptop → phone) also fails while the router can ping both, the AP is
+   the problem, not the bridge.
+
 ## How to get your EcoFlow user_id
 
 BLE authentication uses `MD5(user_id + device_serial)` — the device serial is detected
