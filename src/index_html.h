@@ -114,7 +114,7 @@ static const char INDEX_HTML[] =
 "  <input type=\"file\" id=\"fwfile\" accept=\".bin\">\n"
 "  <button onclick=\"uploadFw()\">Flash &amp; reboot</button>\n"
 "  <div class=\"hint\">Upload firmware.bin from .pio/build/esp32-c6-devkitc-1/ —\n"
-"    or: curl --data-binary @firmware.bin http://&lt;ip&gt;/api/ota</div>\n"
+"    or: curl -H \"Expect:\" --data-binary @firmware.bin http://&lt;ip&gt;/api/ota</div>\n"
 "  <div id=\"fwmsg\"></div>\n"
 "</div><!-- /tab-set -->\n"
 "\n"
