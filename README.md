@@ -84,8 +84,11 @@ bridge accepts new firmware over HTTP:
 
 ```bash
 pio run                     # build firmware.bin
-curl --data-binary @.pio/build/esp32-c6-devkitc-1/firmware.bin http://<bridge-ip>/api/ota
+curl -H "Expect:" --data-binary @.pio/build/esp32-c6-devkitc-1/firmware.bin http://<bridge-ip>/api/ota
 ```
+
+(`-H "Expect:"` is required: curl otherwise waits for a `100 Continue` that the
+ESP-IDF HTTP server never sends, and the upload stalls.)
 
 Or from the web UI: **Settings** tab → **Firmware update** → pick `firmware.bin` →
 **Flash & reboot**.
