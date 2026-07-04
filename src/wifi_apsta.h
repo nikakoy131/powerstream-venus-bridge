@@ -11,6 +11,9 @@ typedef struct {
     char sta_ssid[33];
     int8_t sta_rssi;       /* valid when connected */
     int  retry_count;      /* reconnect attempts since last success */
+    bool ap_active;        /* AP currently running (enabled or fallback) */
+    bool ap_fallback;      /* AP is up only because STA can't connect */
+    char ap_ssid[33];
     int  ap_clients;       /* stations joined to our AP */
 } wifi_status_t;
 

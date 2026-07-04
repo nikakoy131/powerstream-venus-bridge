@@ -1,5 +1,10 @@
 #pragma once
+#include <stdbool.h>
 #include "esp_err.h"
+
+/* Factory defaults for the config AP. */
+#define AP_SSID_DEFAULT "PowerStream-Bridge"
+#define AP_PASS_DEFAULT "powerstream"
 
 /* Runtime configuration, persisted in NVS and editable from the web UI.
    On first boot (empty NVS) values are seeded from the optional gitignored
@@ -8,6 +13,10 @@ typedef struct {
     char wifi_ssid[33];
     char wifi_pass[65];
     char user_id[32];   /* EcoFlow account id for BLE auth (optional) */
+    char ap_ssid[33];
+    char ap_pass[65];   /* empty = open network */
+    bool ap_enabled;    /* if false, AP still starts when STA is unconfigured
+                           or can't connect (fallback) */
 } settings_t;
 
 void       settings_init(void);          /* load NVS + seed defaults */
