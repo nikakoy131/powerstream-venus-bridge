@@ -23,6 +23,16 @@
 #define MAX_DEVICES 40
 #define TAG "ble"
 
+/* Heartbeats arrive ~once/sec; a long connection interval leaves the shared
+   2.4 GHz radio free for WiFi coexistence far more often than NimBLE's
+   aggressive ~30-50ms default, which was starving WiFi (STA associated but
+   went 30+s without RX/TX). Applied both to the initial connect request and
+   enforced against the peer's own BLE_GAP_EVENT_CONN_UPDATE_REQ, since the
+   PowerStream renegotiates back to a short interval if we don't override it. */
+#define PS_CONN_ITVL       320  /* 400 ms, in 1.25 ms units */
+#define PS_CONN_LATENCY    0
+#define PS_CONN_SUPERVISION 600 /* 6 s, in 10 ms units */
+
 /* --- our role in the EcoFlow packet header --- */
 #define PKT_SRC      0x21
 #define AUTH_DST     0x35
@@ -426,8 +436,18 @@ static int gap_event(struct ble_gap_event *ev, void *arg)
             ps_data_set_state(PS_STATE_CONNECTING);
             s_connecting = true;
             ble_gap_disc_cancel();
+            struct ble_gap_conn_params conn_params = {
+                .scan_itvl = 0x0010,
+                .scan_window = 0x0010,
+                .itvl_min = PS_CONN_ITVL,
+                .itvl_max = PS_CONN_ITVL,
+                .latency = PS_CONN_LATENCY,
+                .supervision_timeout = PS_CONN_SUPERVISION,
+                .min_ce_len = 0,
+                .max_ce_len = 0,
+            };
             int rc = ble_gap_connect(BLE_OWN_ADDR_PUBLIC, &ev->disc.addr, 30000,
-                                     NULL, gap_event, NULL);
+                                     &conn_params, gap_event, NULL);
             if (rc != 0) {
                 ESP_LOGW(TAG, "connect failed rc=%d, rescanning", rc);
                 s_connecting = false;
@@ -489,7 +509,15 @@ static int gap_event(struct ble_gap_event *ev, void *arg)
 
     case BLE_GAP_EVENT_NOTIFY_TX:
     case BLE_GAP_EVENT_CONN_UPDATE:
+        return 0;
+
     case BLE_GAP_EVENT_CONN_UPDATE_REQ:
+        /* self_params defaults to a copy of the peer's request; overwrite it
+           so our long interval sticks instead of being renegotiated away. */
+        ev->conn_update_req.self_params->itvl_min = PS_CONN_ITVL;
+        ev->conn_update_req.self_params->itvl_max = PS_CONN_ITVL;
+        ev->conn_update_req.self_params->latency = PS_CONN_LATENCY;
+        ev->conn_update_req.self_params->supervision_timeout = PS_CONN_SUPERVISION;
         return 0;
 
     default:
