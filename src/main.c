@@ -27,5 +27,5 @@ void app_main(void)
     http_server_start();
     modbus_start();
 
-    ESP_LOGI(TAG, "Ready — AP: 192.168.4.1  web UI: http://192.168.4.1");
+    ESP_LOGI(TAG, "Ready — web UI: http://192.168.4.1 (AP) or http://" WIFI_HOSTNAME ".lan (STA)");
 }

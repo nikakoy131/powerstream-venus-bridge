@@ -85,13 +85,21 @@ Type 1 has **no ECDH and no `genSessionKey`/keydata table**:
 advert (`store_serial`/`lookup_serial` in `ble_scan.c`), so any PowerStream on the
 account works with no per-device config.
 
-**Runtime config (no hardcoded secrets):** WiFi STA credentials and the EcoFlow
-`user_id` are stored in NVS and edited from the web UI **Settings** tab
-(`settings.c`, `GET`/`POST /api/settings`; saving reboots). The gitignored headers
-`wifi_secrets.h` / `ps_config.h` are *optional* dev seeds pulled in via
-`__has_include` — a fresh checkout builds without them (AP-only until configured).
-On first boot with no WiFi set, connect to the `PowerStream-Bridge` AP
-(`192.168.4.1`) and configure.
+**Runtime config (no hardcoded secrets):** WiFi STA credentials, the EcoFlow
+`user_id`, and the AP settings (`ap_ssid`/`ap_pass`/`ap_enabled`) are stored in NVS
+and edited from the web UI **Settings** tab (`settings.c`, `GET`/`POST
+/api/settings`; saving reboots). The gitignored headers `wifi_secrets.h` /
+`ps_config.h` are *optional* dev seeds pulled in via `__has_include` — a fresh
+checkout builds without them (AP-only until configured). On first boot with no WiFi
+set, connect to the `PowerStream-Bridge` AP (`192.168.4.1`) and configure. The AP
+can be disabled, but a fallback brings it back after `AP_FALLBACK_RETRIES` failed
+STA reconnects (~1 min) and drops it again on STA connect (`wifi_apsta.c`); with no
+STA configured the AP always runs. Empty `ap_pass` = open AP (stored empty in NVS —
+`load_key_opt`), and the POST handler rejects 1–7 char AP passwords.
+
+**Web UI:** `src/web/index.html` is the source; `src/index_html.h` is **generated**
+from it by `python3 src/web/genheader.py` — edit the HTML, rerun the script, never
+edit the header by hand.
 
 **Module map:** `crypto.c` (MD5/AES-CBC/CRC16-ARC/CRC8), `rawframe.c` (type-1
 framing + reassembly), `packet.c` (inner V2/V3 packet, seq[0] XOR unmask, sentinel),

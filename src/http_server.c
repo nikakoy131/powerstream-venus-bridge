@@ -95,21 +95,25 @@ static esp_err_t status_handler(httpd_req_t *req)
 {
     wifi_status_t w;
     wifi_apsta_get_status(&w);
-    char ssid[80], buf[384];
+    char ssid[80], apssid[80], buf[512];
     json_esc(ssid, sizeof(ssid), w.sta_ssid);
+    json_esc(apssid, sizeof(apssid), w.ap_ssid);
     snprintf(buf, sizeof(buf),
              "{\"hostname\":\"" WIFI_HOSTNAME "\","
              "\"uptime_s\":%lld,"
              "\"heap_free\":%lu,"
              "\"sta\":{\"enabled\":%s,\"connected\":%s,\"ssid\":\"%s\","
              "\"ip\":\"%s\",\"rssi\":%d,\"retries\":%d},"
-             "\"ap\":{\"ssid\":\"PowerStream-Bridge\",\"ip\":\"192.168.4.1\","
-             "\"clients\":%d}}",
+             "\"ap\":{\"ssid\":\"%s\",\"ip\":\"192.168.4.1\","
+             "\"active\":%s,\"fallback\":%s,\"clients\":%d}}",
              (long long)(esp_timer_get_time() / 1000000),
              (unsigned long)esp_get_free_heap_size(),
              w.sta_enabled ? "true" : "false",
              w.sta_connected ? "true" : "false",
              ssid, w.sta_ip, w.sta_rssi, w.retry_count,
+             apssid,
+             w.ap_active ? "true" : "false",
+             w.ap_fallback ? "true" : "false",
              w.ap_clients);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, buf);
@@ -128,12 +132,16 @@ static esp_err_t log_handler(httpd_req_t *req)
 static esp_err_t settings_get_handler(httpd_req_t *req)
 {
     settings_t cfg = settings_get();
-    char ssid[80], uid[72], buf[256];
+    char ssid[80], uid[72], apssid[80], buf[384];
     json_esc(ssid, sizeof(ssid), cfg.wifi_ssid);
     json_esc(uid, sizeof(uid), cfg.user_id);
+    json_esc(apssid, sizeof(apssid), cfg.ap_ssid);
     snprintf(buf, sizeof(buf),
-             "{\"wifi_ssid\":\"%s\",\"user_id\":\"%s\",\"wifi_pass_set\":%s}",
-             ssid, uid, cfg.wifi_pass[0] ? "true" : "false");
+             "{\"wifi_ssid\":\"%s\",\"user_id\":\"%s\",\"wifi_pass_set\":%s,"
+             "\"ap_ssid\":\"%s\",\"ap_enabled\":%s,\"ap_pass_set\":%s}",
+             ssid, uid, cfg.wifi_pass[0] ? "true" : "false",
+             apssid, cfg.ap_enabled ? "true" : "false",
+             cfg.ap_pass[0] ? "true" : "false");
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, buf);
     return ESP_OK;
@@ -232,6 +240,26 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
     /* Only replace the password when a non-empty value is submitted. */
     if (form_get(body, "wifi_pass", val, sizeof(val)) && val[0])
         strlcpy(cfg.wifi_pass, val, sizeof(cfg.wifi_pass));
+
+    /* AP name may not be blank — the fallback AP needs an SSID to appear as. */
+    if (form_get(body, "ap_ssid", val, sizeof(val)) && val[0])
+        strlcpy(cfg.ap_ssid, val, sizeof(cfg.ap_ssid));
+    if (form_get(body, "ap_enabled", val, sizeof(val)))
+        cfg.ap_enabled = (val[0] == '1');
+    /* Empty AP password = open network, requested via explicit clear flag;
+       otherwise blank means "keep current" like wifi_pass. */
+    if (form_get(body, "ap_pass_clear", val, sizeof(val)) && val[0] == '1') {
+        cfg.ap_pass[0] = '\0';
+    } else if (form_get(body, "ap_pass", val, sizeof(val)) && val[0]) {
+        if (strlen(val) < 8) {
+            httpd_resp_set_status(req, "400 Bad Request");
+            httpd_resp_set_type(req, "application/json");
+            httpd_resp_sendstr(req,
+                "{\"ok\":false,\"err\":\"AP password needs 8+ characters (WPA2)\"}");
+            return ESP_OK;
+        }
+        strlcpy(cfg.ap_pass, val, sizeof(cfg.ap_pass));
+    }
 
     if (settings_save(&cfg) != ESP_OK) {
         httpd_resp_set_status(req, "500 Internal Server Error");

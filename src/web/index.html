@@ -39,6 +39,8 @@
   form label { display: block; margin: 0.8rem 0 0.2rem; color: #8cf; font-size: 0.85rem; }
   form input { width: 100%; max-width: 360px; padding: 0.4rem; background: #181818;
                color: #ddd; border: 1px solid #333; font-family: monospace; box-sizing: border-box; }
+  form label.check { color: #ddd; }
+  form label.check input { width: auto; margin-right: 0.4rem; }
   form button { margin-top: 1.2rem; padding: 0.5rem 1.2rem; background: #1a4a1a;
                 color: #6f6; border: 1px solid #2a5a2a; cursor: pointer; font-family: monospace; }
   .hint { font-size: 0.75rem; color: #777; margin-top: 0.2rem; }
@@ -50,6 +52,8 @@
 <h1>PowerStream Bridge</h1>
 <div class="tabs">
   <button id="tb-dash" class="active" onclick="showTab('dash')">Dashboard</button>
+  <button id="tb-stat" onclick="showTab('stat')">Status</button>
+  <button id="tb-log" onclick="showTab('log')">Log</button>
   <button id="tb-set" onclick="showTab('set')">Settings</button>
 </div>
 
@@ -77,6 +81,18 @@
 <div id="count"></div>
 </div><!-- /tab-dash -->
 
+<div id="tab-stat" hidden>
+  <h2>Bridge status</h2>
+  <table id="stattbl"><tbody></tbody></table>
+</div><!-- /tab-stat -->
+
+<div id="tab-log" hidden>
+  <h2>Log <label style="font-size:0.75rem;color:#888">
+    <input type="checkbox" id="logfollow" checked> follow</label></h2>
+  <pre id="logpre" style="background:#181818;border:1px solid #333;padding:0.8rem;
+       max-height:70vh;overflow:auto;white-space:pre-wrap;font-size:0.75rem"></pre>
+</div><!-- /tab-log -->
+
 <div id="tab-set" hidden>
   <form id="setform" onsubmit="return saveSettings(event)">
     <label>WiFi network (STA SSID)</label>
@@ -89,9 +105,29 @@
     <div class="hint">PowerStream serials are auto-detected; only the account user_id may be needed.
       Find yours at <a href="https://gnox.github.io/user_id" target="_blank" rel="noopener">gnox.github.io/user_id</a>
       (enter your EcoFlow login once — it's used only to query the API and is not stored).</div>
+
+    <h2>Access point</h2>
+    <label class="check"><input type="checkbox" id="f-apen"> AP enabled</label>
+    <div class="hint">If disabled but the WiFi above can't be reached, the AP
+      starts anyway after ~1 minute so the device stays configurable.</div>
+    <label>AP name (SSID)</label>
+    <input id="f-apssid" name="ap_ssid" autocomplete="off">
+    <label>AP password</label>
+    <input id="f-appass" name="ap_pass" type="password" autocomplete="off" placeholder="unchanged">
+    <div class="hint">8+ characters (WPA2). Leave blank to keep the current one.</div>
+    <label class="check"><input type="checkbox" id="f-appclr" name="ap_pass_clear" value="1">
+      remove password (open network)</label>
+
     <button type="submit">Save &amp; reboot</button>
     <div id="setmsg"></div>
   </form>
+
+  <h2>Firmware update</h2>
+  <input type="file" id="fwfile" accept=".bin">
+  <button onclick="uploadFw()">Flash &amp; reboot</button>
+  <div class="hint">Upload firmware.bin from .pio/build/esp32-c6-devkitc-1/ —
+    or: curl -H "Expect:" --data-binary @firmware.bin http://&lt;ip&gt;/api/ota</div>
+  <div id="fwmsg"></div>
 </div><!-- /tab-set -->
 
 <script>
@@ -99,12 +135,50 @@ let devices = [];
 let sortKey = 'rssi';
 let sortAsc  = true;
 
+let curTab = 'dash';
 function showTab(t) {
-  document.getElementById('tab-dash').hidden = t !== 'dash';
-  document.getElementById('tab-set').hidden = t !== 'set';
-  document.getElementById('tb-dash').classList.toggle('active', t === 'dash');
-  document.getElementById('tb-set').classList.toggle('active', t === 'set');
+  curTab = t;
+  for (const n of ['dash', 'stat', 'log', 'set']) {
+    document.getElementById('tab-' + n).hidden = t !== n;
+    document.getElementById('tb-' + n).classList.toggle('active', t === n);
+  }
   if (t === 'set') loadSettings();
+  if (t === 'stat') pollStatus();
+  if (t === 'log') pollLog();
+}
+
+async function pollStatus() {
+  try {
+    const s = await fetch('/api/status').then(r => r.json());
+    const up = s.uptime_s, h = Math.floor(up/3600), m = Math.floor(up%3600/60);
+    const ap = !s.ap.active ? 'disabled' :
+      s.ap.ssid + ' @ ' + s.ap.ip + (s.ap.fallback ? ' (FALLBACK — WiFi unreachable)' : '');
+    const rows = [
+      ['Hostname', s.hostname],
+      ['Uptime', h + 'h ' + m + 'm ' + (up%60) + 's'],
+      ['Free heap', Math.round(s.heap_free/1024) + ' KB'],
+      ['WiFi client (STA)', s.sta.enabled ?
+        (s.sta.connected ? 'connected' : 'DISCONNECTED (retry #' + s.sta.retries + ')')
+        : 'not configured'],
+      ['STA network', s.sta.ssid || '—'],
+      ['STA IP', s.sta.ip],
+      ['STA signal', s.sta.connected ? s.sta.rssi + ' dBm' : '—'],
+      ['Access point', ap],
+      ['AP clients', s.ap.clients],
+    ];
+    document.querySelector('#stattbl tbody').innerHTML =
+      rows.map(r => `<tr><td>${r[0]}</td><td>${esc(String(r[1]))}</td></tr>`).join('');
+  } catch (e) {}
+}
+
+async function pollLog() {
+  try {
+    const txt = await fetch('/api/log').then(r => r.text());
+    const pre = document.getElementById('logpre');
+    pre.textContent = txt;
+    if (document.getElementById('logfollow').checked)
+      pre.scrollTop = pre.scrollHeight;
+  } catch (e) {}
 }
 
 async function loadSettings() {
@@ -113,20 +187,46 @@ async function loadSettings() {
     document.getElementById('f-ssid').value = s.wifi_ssid || '';
     document.getElementById('f-uid').value = s.user_id || '';
     document.getElementById('f-pass').placeholder = s.wifi_pass_set ? 'unchanged' : '(none set)';
+    document.getElementById('f-apssid').value = s.ap_ssid || '';
+    document.getElementById('f-appass').placeholder = s.ap_pass_set ? 'unchanged' : '(open network)';
+    document.getElementById('f-apen').checked = !!s.ap_enabled;
+    document.getElementById('f-appclr').checked = false;
   } catch (e) {}
 }
 
 async function saveSettings(ev) {
   ev.preventDefault();
-  const body = new URLSearchParams(new FormData(document.getElementById('setform'))).toString();
-  document.getElementById('setmsg').textContent = 'Saving…';
+  const msg = document.getElementById('setmsg');
+  const appass = document.getElementById('f-appass').value;
+  if (appass && appass.length < 8) {
+    msg.textContent = 'AP password needs 8+ characters (WPA2).';
+    return false;
+  }
+  const p = new URLSearchParams(new FormData(document.getElementById('setform')));
+  p.set('ap_enabled', document.getElementById('f-apen').checked ? '1' : '0');
+  msg.textContent = 'Saving…';
   try {
-    await fetch('/api/settings', { method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+    const r = await fetch('/api/settings', { method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: p.toString() });
+    const j = await r.json();
+    if (!j.ok) { msg.textContent = 'Failed: ' + (j.err || r.status); return false; }
   } catch (e) {}
-  document.getElementById('setmsg').textContent =
+  msg.textContent =
     'Saved. Device is rebooting — reconnect in ~10 s (new IP if WiFi changed).';
   return false;
+}
+
+async function uploadFw() {
+  const f = document.getElementById('fwfile').files[0];
+  const msg = document.getElementById('fwmsg');
+  if (!f) { msg.textContent = 'Pick a firmware.bin first.'; return; }
+  msg.textContent = 'Uploading ' + Math.round(f.size/1024) + ' KB…';
+  try {
+    const r = await fetch('/api/ota', { method: 'POST', body: f });
+    const j = await r.json();
+    msg.textContent = j.ok ? 'Flashed OK — rebooting, reconnect in ~10 s.'
+                           : 'Failed: ' + (j.err || r.status);
+  } catch (e) { msg.textContent = 'Upload failed: ' + e.message; }
 }
 
 function rssiClass(r) {
@@ -214,6 +314,8 @@ function renderPS(d) {
 }
 
 async function poll() {
+  if (curTab === 'stat') pollStatus();
+  if (curTab === 'log') pollLog();
   try {
     const [dev, ps] = await Promise.all([
       fetch('/api/devices').then(r => r.json()),

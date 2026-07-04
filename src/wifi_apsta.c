@@ -8,8 +8,6 @@
 #include "esp_timer.h"
 #include "nvs_flash.h"
 
-#define AP_SSID     "PowerStream-Bridge"
-#define AP_PASS     "powerstream"
 #define AP_CHANNEL  1
 #define AP_MAX_STA  4
 
@@ -18,11 +16,20 @@
 #define RETRY_FAST      5
 #define RETRY_SLOW_MS   10000
 
+/* With the AP disabled, bring it up anyway once STA has failed this many
+   times (5 fast retries + slow retries every 10 s ≈ 1 minute) so a bad
+   password or vanished network can't make the device unreachable. */
+#define AP_FALLBACK_RETRIES 10
+
 static const char *TAG = "wifi";
 static int s_retry = 0;
 static bool s_got_ip = false;
 static char s_ip[16] = "0.0.0.0";
 static esp_timer_handle_t s_retry_timer;
+static bool s_ap_enabled = true;   /* effective: settings OR no-STA brick guard */
+static bool s_ap_fallback = false;
+static char s_ap_ssid[33];
+static wifi_config_t s_ap_cfg;     /* kept for the fallback path */
 
 static void retry_cb(void *arg)
 {
@@ -56,6 +63,14 @@ static void event_handler(void *arg, esp_event_base_t base,
             ESP_LOGW(TAG, "STA down, retrying every %d s", RETRY_SLOW_MS / 1000);
             esp_timer_start_periodic(s_retry_timer, (uint64_t)RETRY_SLOW_MS * 1000);
         }
+        if (!s_ap_enabled && !s_ap_fallback && s_retry >= AP_FALLBACK_RETRIES) {
+            ESP_LOGW(TAG, "STA unreachable, starting fallback AP '%s'", s_ap_ssid);
+            s_ap_fallback = true;
+            /* AP config can only be applied while the mode includes the AP
+               interface, so it is (re)applied here, not at boot. */
+            esp_wifi_set_mode(WIFI_MODE_APSTA);
+            esp_wifi_set_config(WIFI_IF_AP, &s_ap_cfg);
+        }
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *e = (ip_event_got_ip_t *)data;
         snprintf(s_ip, sizeof(s_ip), IPSTR, IP2STR(&e->ip_info.ip));
@@ -63,8 +78,13 @@ static void event_handler(void *arg, esp_event_base_t base,
         esp_timer_stop(s_retry_timer);
         s_retry = 0;
         s_got_ip = true;
+        if (s_ap_fallback) {
+            ESP_LOGI(TAG, "STA connected, stopping fallback AP");
+            s_ap_fallback = false;
+            esp_wifi_set_mode(WIFI_MODE_STA);
+        }
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_START) {
-        ESP_LOGI(TAG, "AP started — SSID: %s  IP: 192.168.4.1", AP_SSID);
+        ESP_LOGI(TAG, "AP started — SSID: %s  IP: 192.168.4.1", s_ap_ssid);
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STACONNECTED) {
         ESP_LOGI(TAG, "Client connected to AP");
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_AP_STADISCONNECTED) {
@@ -95,21 +115,26 @@ void wifi_apsta_start(void)
     esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, event_handler, NULL);
     esp_event_handler_register(IP_EVENT,   IP_EVENT_STA_GOT_IP, event_handler, NULL);
 
-    wifi_config_t ap_cfg = {
-        .ap = {
-            .ssid           = AP_SSID,
-            .ssid_len       = sizeof(AP_SSID) - 1,
-            .password       = AP_PASS,
-            .channel        = AP_CHANNEL,
-            .max_connection = AP_MAX_STA,
-            .authmode       = WIFI_AUTH_WPA2_PSK,
-            .pairwise_cipher = WIFI_CIPHER_TYPE_CCMP,
-            .pmf_cfg        = { .capable = false, .required = false },
-        },
-    };
+    strlcpy(s_ap_ssid, scfg.ap_ssid, sizeof(s_ap_ssid));
+    /* No STA configured → the AP must run no matter what (brick guard). */
+    s_ap_enabled = scfg.ap_enabled || !sta_enabled;
 
-    esp_wifi_set_mode(sta_enabled ? WIFI_MODE_APSTA : WIFI_MODE_AP);
-    esp_wifi_set_config(WIFI_IF_AP, &ap_cfg);
+    bool ap_open = (scfg.ap_pass[0] == '\0');
+    memset(&s_ap_cfg, 0, sizeof(s_ap_cfg));
+    s_ap_cfg.ap.channel         = AP_CHANNEL;
+    s_ap_cfg.ap.max_connection  = AP_MAX_STA;
+    s_ap_cfg.ap.authmode        = ap_open ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
+    s_ap_cfg.ap.pairwise_cipher = WIFI_CIPHER_TYPE_CCMP;
+    s_ap_cfg.ap.ssid_len = strlcpy((char *)s_ap_cfg.ap.ssid, scfg.ap_ssid,
+                                   sizeof(s_ap_cfg.ap.ssid));
+    strlcpy((char *)s_ap_cfg.ap.password, scfg.ap_pass, sizeof(s_ap_cfg.ap.password));
+
+    esp_wifi_set_mode(sta_enabled ? (s_ap_enabled ? WIFI_MODE_APSTA : WIFI_MODE_STA)
+                                  : WIFI_MODE_AP);
+    /* AP config can only be applied while the mode includes the AP interface;
+       in STA-only mode it is applied later by the fallback path. */
+    if (s_ap_enabled)
+        esp_wifi_set_config(WIFI_IF_AP, &s_ap_cfg);
 
     if (sta_enabled) {
         wifi_config_t sta_cfg = {0};
@@ -142,6 +167,9 @@ void wifi_apsta_get_status(wifi_status_t *out)
     out->sta_connected = s_got_ip;
     strlcpy(out->sta_ip, s_ip, sizeof(out->sta_ip));
     out->retry_count = s_retry;
+    out->ap_active = s_ap_enabled || s_ap_fallback;
+    out->ap_fallback = s_ap_fallback;
+    strlcpy(out->ap_ssid, s_ap_ssid, sizeof(out->ap_ssid));
 
     if (s_got_ip) {
         wifi_ap_record_t ap;
