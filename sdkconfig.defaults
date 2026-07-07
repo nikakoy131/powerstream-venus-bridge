@@ -14,3 +14,7 @@ CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 
 # Increase NimBLE host task stack (BLE + crypto)
 CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=5120
+
+# Socket fd pool is shared by httpd (2 internal + sessions) and Modbus
+# (listener + client); the default 10 exhausts in the field (accept ENFILE).
+CONFIG_LWIP_MAX_SOCKETS=16
