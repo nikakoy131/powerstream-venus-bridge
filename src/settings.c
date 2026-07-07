@@ -53,6 +53,7 @@ void settings_init(void)
         load_key(h, "user_id",   s_cfg.user_id,   sizeof(s_cfg.user_id),   PS_USER_ID);
         load_key(h, "ap_ssid",   s_cfg.ap_ssid,   sizeof(s_cfg.ap_ssid),   AP_SSID_DEFAULT);
         load_key_opt(h, "ap_pass", s_cfg.ap_pass, sizeof(s_cfg.ap_pass),   AP_PASS_DEFAULT);
+        load_key(h, "github_url", s_cfg.github_url, sizeof(s_cfg.github_url), GITHUB_URL_DEFAULT);
         uint8_t en = 1;
         if (nvs_get_u8(h, "ap_en", &en) == ESP_OK)
             s_cfg.ap_enabled = (en != 0);
@@ -63,6 +64,7 @@ void settings_init(void)
         strlcpy(s_cfg.user_id,   PS_USER_ID,   sizeof(s_cfg.user_id));
         strlcpy(s_cfg.ap_ssid,   AP_SSID_DEFAULT, sizeof(s_cfg.ap_ssid));
         strlcpy(s_cfg.ap_pass,   AP_PASS_DEFAULT, sizeof(s_cfg.ap_pass));
+        strlcpy(s_cfg.github_url, GITHUB_URL_DEFAULT, sizeof(s_cfg.github_url));
     }
     ESP_LOGI(TAG, "loaded: wifi_ssid='%s' user_id=%s ap_ssid='%s' ap=%s",
              s_cfg.wifi_ssid, s_cfg.user_id[0] ? "set" : "(empty)",
@@ -85,6 +87,7 @@ esp_err_t settings_save(const settings_t *s)
     nvs_set_str(h, "user_id",   s->user_id);
     nvs_set_str(h, "ap_ssid",   s->ap_ssid);
     nvs_set_str(h, "ap_pass",   s->ap_pass);
+    nvs_set_str(h, "github_url", s->github_url);
     nvs_set_u8(h,  "ap_en",     s->ap_enabled ? 1 : 0);
     e = nvs_commit(h);
     nvs_close(h);

@@ -13,6 +13,7 @@ idf_component_register(
         "ps_data.c"
         "sunspec.c"
         "modbus.c"
+        "updatecheck.c"
     INCLUDE_DIRS "."
     REQUIRES
         esp_wifi
@@ -25,5 +26,7 @@ idf_component_register(
         lwip
         bt
         mbedtls
+        esp_http_client
+        esp-tls
         log
 )
