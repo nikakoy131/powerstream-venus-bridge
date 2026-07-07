@@ -1,19 +1,69 @@
 name: Release
 
+# Every merge to main auto-bumps the patch version, tags it, builds, and
+# publishes a GitHub Release. For a minor/major bump, run this workflow
+# manually (Actions -> Release -> Run workflow) with an explicit version
+# like v0.10.0 or v1.0.0. Put [skip release] in the merge commit to skip.
+
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Explicit version tag (e.g. v0.10.0). Leave blank to auto-bump the patch."
+        required: false
 
 permissions:
-  contents: write   # create the GitHub Release and upload assets
+  contents: write   # create the tag, GitHub Release, and upload assets
+
+concurrency:
+  group: release     # serialize releases so two merges don't race on tags
+  cancel-in-progress: false
 
 jobs:
   release:
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip release]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0   # full history + tags so `git describe` embeds the tag
+          fetch-depth: 0   # full history + tags so version compute and git describe work
+
+      - name: Compute next version
+        id: ver
+        run: |
+          set -euo pipefail
+          INPUT="${{ github.event.inputs.version }}"
+          if [ -n "$INPUT" ]; then
+            NEXT="$INPUT"
+          else
+            LATEST=$(git tag -l 'v*' --sort=-v:refname | head -n1)
+            if [ -z "$LATEST" ]; then
+              NEXT="v0.9.0"          # baseline for the very first release
+            else
+              V=${LATEST#v}
+              MAJOR=$(echo "$V" | cut -d. -f1)
+              MINOR=$(echo "$V" | cut -d. -f2)
+              PATCH=$(echo "$V" | cut -d. -f3)
+              NEXT="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+            fi
+          fi
+          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "Next version: $NEXT"
+
+      - name: Create and push tag
+        run: |
+          set -euo pipefail
+          NEXT="${{ steps.ver.outputs.next }}"
+          if git rev-parse -q --verify "refs/tags/$NEXT" >/dev/null; then
+            echo "Tag $NEXT already exists — aborting to avoid overwriting a release." >&2
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$NEXT" -m "$NEXT"          # local tag lets git describe embed it in the build
+          git push origin "$NEXT"
 
       - uses: actions/setup-python@v6
         with:
@@ -38,6 +88,7 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.ver.outputs.next }}
           generate_release_notes: true
           files: |
             .pio/build/esp32-c6-devkitc-1/firmware.bin
