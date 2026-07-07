@@ -115,10 +115,26 @@ static void modbus_task(void *arg)
         struct sockaddr_in src;
         socklen_t slen = sizeof(src);
         int sock = accept(listen_sock, (struct sockaddr *)&src, &slen);
-        if (sock < 0)
+        if (sock < 0) {
+            vTaskDelay(pdMS_TO_TICKS(100));   /* don't spin if fds run dry */
             continue;
-        int ka = 1;
-        setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &ka, sizeof(ka));
+        }
+        int nd = 1;
+        setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, &nd, sizeof(nd));
+        /* The server handles one client at a time and blocks in recv(); a
+           peer that vanishes without a FIN (Cerbo reboot, WiFi drop) would
+           otherwise pin the fd and the whole server forever. Keepalive
+           reaps half-open peers, the recv timeout bounds silent ones
+           (Venus polls every few seconds, so 5 min idle = dead). */
+        int ka = 1, idle = 30, intvl = 5, cnt = 3;
+        setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE, &ka, sizeof(ka));
+        setsockopt(sock, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+        setsockopt(sock, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+        setsockopt(sock, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
+        struct timeval rto = { .tv_sec = 300, .tv_usec = 0 };
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &rto, sizeof(rto));
+        struct timeval sto = { .tv_sec = 30, .tv_usec = 0 };
+        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &sto, sizeof(sto));
         ESP_LOGI(TAG, "client connected");
         handle_client(sock);
         close(sock);

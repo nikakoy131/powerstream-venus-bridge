@@ -13,6 +13,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include "lwip/sockets.h"
 
 #define TAG "http"
 #define MAX_DEVICES 40
@@ -274,14 +275,36 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* A client that vanishes without closing (phone leaves WiFi, laptop sleeps)
+   never sends a FIN, so its session socket leaks until TCP keepalive probes
+   it out. Without this, leaked sessions drain the global lwIP fd pool and
+   accept() wedges into ENFILE for every new connection. */
+static esp_err_t session_open_cb(httpd_handle_t hd, int sockfd)
+{
+    (void)hd;
+    int yes = 1, idle = 60, intvl = 10, cnt = 3;   /* dead after ~90 s */
+    setsockopt(sockfd, SOL_SOCKET, SO_KEEPALIVE, &yes, sizeof(yes));
+    setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
+    setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
+    setsockopt(sockfd, IPPROTO_TCP, TCP_KEEPCNT, &cnt, sizeof(cnt));
+    return ESP_OK;
+}
+
 void http_server_start(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.max_uri_handlers = 10;
-    /* Purge idle connections instead of refusing new ones once the socket
-       pool (7) fills up — stale keep-alive sessions otherwise wedge the
+    /* Purge idle connections instead of refusing new ones once the session
+       table fills up — stale keep-alive sessions otherwise wedge the
        server into "accept error 23" (ENFILE) until reboot. */
     cfg.lru_purge_enable = true;
+    /* lru_purge only fires when the session table is FULL; if the shared
+       lwIP fd pool runs dry first (httpd 2 internal + sessions, Modbus
+       listener + client), accept() fails with ENFILE while slots look free
+       and the purge never runs. Keep the table small enough that it fills —
+       and purges — before the pool is exhausted. */
+    cfg.max_open_sockets = 5;
+    cfg.open_fn = session_open_cb;
     httpd_handle_t server = NULL;
     if (httpd_start(&server, &cfg) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start HTTP server");
