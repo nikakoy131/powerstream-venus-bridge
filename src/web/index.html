@@ -41,11 +41,24 @@
                color: #ddd; border: 1px solid #333; font-family: monospace; box-sizing: border-box; }
   form label.check { color: #ddd; }
   form label.check input { width: auto; margin-right: 0.4rem; }
-  form button { margin-top: 1.2rem; padding: 0.5rem 1.2rem; background: #1a4a1a;
-                color: #6f6; border: 1px solid #2a5a2a; cursor: pointer; font-family: monospace; }
+  .btn, form button { margin-top: 1.2rem; padding: 0.5rem 1.2rem; background: #1a4a1a;
+                color: #6f6; border: 1px solid #2a5a2a; border-radius: 4px; cursor: pointer;
+                font-family: monospace; font-size: 0.85rem; }
+  .btn:hover, form button:hover { background: #225a22; color: #8f8; }
+  /* Secondary (non-destructive) action button, e.g. "check for updates". */
+  .btn.secondary { background: #1a2a3a; color: #adf; border-color: #2a4a6a; }
+  .btn.secondary:hover { background: #22405a; color: #cef; }
+  input[type=file] { max-width: 360px; color: #aaa; font-size: 0.8rem; font-family: monospace; }
+  input[type=file]::file-selector-button { padding: 0.4rem 0.9rem; margin-right: 0.6rem;
+                background: #222; color: #adf; border: 1px solid #333; border-radius: 4px;
+                cursor: pointer; font-family: monospace; }
+  input[type=file]::file-selector-button:hover { background: #2a2a2a; }
+  .fwrow { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin-top: 0.6rem; }
+  .fwrow .btn { margin-top: 0; }
   .hint { font-size: 0.75rem; color: #777; margin-top: 0.2rem; }
   .hint a { color: #4af; }
   #setmsg { margin-top: 1rem; color: #fa0; }
+  #updmsg { margin: 0.6rem 0; }
 </style>
 </head>
 <body>
@@ -131,10 +144,12 @@
   </form>
 
   <h2>Firmware update</h2>
-  <button type="button" onclick="checkUpdate()">Check for updates</button>
+  <button type="button" class="btn secondary" onclick="checkUpdate()">Check for updates</button>
   <div id="updmsg" class="hint"></div>
-  <input type="file" id="fwfile" accept=".bin">
-  <button onclick="uploadFw()">Flash &amp; reboot</button>
+  <div class="fwrow">
+    <input type="file" id="fwfile" accept=".bin">
+    <button type="button" class="btn" onclick="uploadFw()">Flash &amp; reboot</button>
+  </div>
   <div class="hint">Upload firmware.bin from .pio/build/esp32-c6-devkitc-1/ —
     or: curl -H "Expect:" --data-binary @firmware.bin http://&lt;ip&gt;/api/ota</div>
   <div id="fwmsg"></div>
