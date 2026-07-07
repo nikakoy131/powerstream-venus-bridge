@@ -76,6 +76,40 @@ static void handle_client(int sock)
                     resp_len = 9 + 2 * qty;
                 }
             }
+        } else if (fc == 0x06) {                   /* Write Single Register */
+            uint16_t addr = (pdu[1] << 8) | pdu[2];
+            uint16_t val  = (pdu[3] << 8) | pdu[4];
+            uint16_t base = (addr >= SUNSPEC_BASE_ADDR) ? addr - SUNSPEC_BASE_ADDR : addr;
+            if (len - 1 < 5 || sunspec_write(base, 1, &val) != 1) {
+                resp_len = make_exception(resp, mbap, fc, 0x02);  /* illegal address */
+            } else {
+                memcpy(resp, mbap, 7);             /* echo request */
+                resp[4] = 0; resp[5] = 6;
+                resp[7] = fc;
+                memcpy(resp + 8, pdu + 1, 4);      /* addr + value */
+                resp_len = 12;
+            }
+        } else if (fc == 0x10) {                   /* Write Multiple Registers */
+            uint16_t addr = (pdu[1] << 8) | pdu[2];
+            uint16_t qty  = (pdu[3] << 8) | pdu[4];
+            uint8_t  bc   = pdu[5];
+            uint16_t base = (addr >= SUNSPEC_BASE_ADDR) ? addr - SUNSPEC_BASE_ADDR : addr;
+            uint16_t regs[16];
+            if (qty == 0 || qty > 16 || bc != 2 * qty || (int)len - 1 < 6 + bc) {
+                resp_len = make_exception(resp, mbap, fc, 0x03);  /* illegal value */
+            } else {
+                for (uint16_t i = 0; i < qty; i++)
+                    regs[i] = ((uint16_t)pdu[6 + 2 * i] << 8) | pdu[7 + 2 * i];
+                if (sunspec_write(base, qty, regs) != qty) {
+                    resp_len = make_exception(resp, mbap, fc, 0x02);
+                } else {
+                    memcpy(resp, mbap, 7);
+                    resp[4] = 0; resp[5] = 6;
+                    resp[7] = fc;
+                    memcpy(resp + 8, pdu + 1, 4);  /* addr + qty */
+                    resp_len = 12;
+                }
+            }
         } else {
             resp_len = make_exception(resp, mbap, fc, 0x01);  /* illegal function */
         }

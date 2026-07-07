@@ -45,6 +45,13 @@
 #define HB_CMD_SET  0x14
 #define HB_CMD_ID   0x01
 
+/* Set "custom load power": cmd_set=0x14 cmd_id=0x81, payload is a
+   permanent_watts_pack protobuf { permanent_watts(1): varint deci-watts }.
+   The device echoes the value back as inverter_heartbeat field 48
+   (load_watts), so the web UI / heartbeat log confirm each change. */
+#define PS_CMD_SET      0x14
+#define CMD_ID_SET_WATTS 0x81
+
 /* ---- GATT characteristic UUIDs (two possible transports) ---- */
 /* Nordic UART: write 6e400002-…, notify 6e400003-… (bytes little-endian) */
 static const ble_uuid128_t UART_WRITE = BLE_UUID128_INIT(
@@ -235,6 +242,44 @@ static void send_auth(void)
     send_session(CMD_SET_SYS, CMD_ID_AUTH, payload, sizeof(payload));
 }
 
+/* ---- output setpoint (Venus power limiting via SunSpec model 123) ---- */
+
+/* Aligned 32-bit stores are atomic on the C6, so the Modbus task can post a
+   request without locking; the 1 s timer below (same esp_timer task as the
+   keepalive) does the actual BLE send. -1 = nothing requested/sent. */
+static volatile int32_t s_req_dw = -1;   /* requested setpoint, deci-watts */
+static int32_t          s_sent_dw = -1;  /* last value sent this connection */
+
+void ble_ps_request_watts(int32_t deciwatts)
+{
+    if (deciwatts < 0)    deciwatts = 0;
+    if (deciwatts > 8000) deciwatts = 8000;
+    s_req_dw = deciwatts;
+}
+
+static void setpoint_timer_cb(void *arg)
+{
+    (void)arg;
+    int32_t want = s_req_dw;
+    if (want < 0 || want == s_sent_dw)
+        return;
+    if (s_conn == BLE_HS_CONN_HANDLE_NONE || s_phase != PS_STATE_STREAMING)
+        return;
+    /* permanent_watts_pack: field 1, varint */
+    uint8_t pl[8];
+    size_t n = 0;
+    pl[n++] = 0x08;
+    uint32_t v = (uint32_t)want;
+    do {
+        uint8_t b = v & 0x7F;
+        v >>= 7;
+        pl[n++] = b | (v ? 0x80 : 0);
+    } while (v);
+    send_session(PS_CMD_SET, CMD_ID_SET_WATTS, pl, n);
+    s_sent_dw = want;
+    ESP_LOGI(TAG, "load setpoint -> %ld.%ldW", (long)want / 10, (long)want % 10);
+}
+
 static void handle_inner(uint8_t *p, size_t len)
 {
     packet_t pkt;
@@ -385,6 +430,7 @@ static void reset_link(void)
     s_write_handle = s_notify_handle = s_cccd_handle = 0;
     rawframe_reset(&s_asm);
     wq_reset();
+    s_sent_dw = -1;   /* re-send any pending setpoint after reconnect */
     s_phase = PS_STATE_DISCONNECTED;
 }
 
@@ -593,6 +639,11 @@ void ble_scan_start(void)
     const esp_timer_create_args_t a = { .callback = keepalive_timer_cb, .name = "keepalive" };
     esp_timer_create(&a, &ka);
     esp_timer_start_periodic(ka, 30 * 1000 * 1000); /* 30 s */
+
+    static esp_timer_handle_t sp;
+    const esp_timer_create_args_t b = { .callback = setpoint_timer_cb, .name = "setpoint" };
+    esp_timer_create(&b, &sp);
+    esp_timer_start_periodic(sp, 1000 * 1000); /* 1 s */
 
     nimble_port_freertos_init(ble_host_task);
 }
