@@ -4,6 +4,7 @@
 
 #include <string.h>
 #include "esp_timer.h"
+#include "esp_app_desc.h"
 
 /* 0-based register indices of each block within the 178-register map. */
 #define M1_HDR   2     /* Common header   */
@@ -68,7 +69,7 @@ void sunspec_init(void)
     set_str(M1_DATA + 0,  16, "EcoFlow");      /* Mn  */
     set_str(M1_DATA + 16, 16, "PowerStream");  /* Md  */
     set_str(M1_DATA + 32, 8,  "");             /* Opt */
-    set_str(M1_DATA + 40, 8,  "1.0");          /* Vr  */
+    set_str(M1_DATA + 40, 8,  esp_app_get_description()->version); /* Vr (git describe) */
     set_str(M1_DATA + 48, 16, "");             /* SN (filled in update) */
     set_u16(M1_DATA + 64, 126);                /* DA  */
     set_u16(M1_DATA + 65, 0);                  /* Pad */

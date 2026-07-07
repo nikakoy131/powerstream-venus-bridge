@@ -50,6 +50,7 @@
 </head>
 <body>
 <h1>PowerStream Bridge</h1>
+<div id="fwver" class="hint"></div>
 <div class="tabs">
   <button id="tb-dash" class="active" onclick="showTab('dash')">Dashboard</button>
   <button id="tb-stat" onclick="showTab('stat')">Status</button>
@@ -138,6 +139,7 @@ let sortAsc  = true;
 let curTab = 'dash';
 function showTab(t) {
   curTab = t;
+  try { localStorage.setItem('tab', t); } catch (e) {}
   for (const n of ['dash', 'stat', 'log', 'set']) {
     document.getElementById('tab-' + n).hidden = t !== n;
     document.getElementById('tb-' + n).classList.toggle('active', t === n);
@@ -154,6 +156,7 @@ async function pollStatus() {
     const ap = !s.ap.active ? 'disabled' :
       s.ap.ssid + ' @ ' + s.ap.ip + (s.ap.fallback ? ' (FALLBACK — WiFi unreachable)' : '');
     const rows = [
+      ['Firmware', s.fw_version || '—'],
       ['Hostname', s.hostname],
       ['Uptime', h + 'h ' + m + 'm ' + (up%60) + 's'],
       ['Free heap', Math.round(s.heap_free/1024) + ' KB'],
@@ -316,6 +319,7 @@ function renderPS(d) {
 async function poll() {
   if (curTab === 'stat') pollStatus();
   if (curTab === 'log') pollLog();
+  if (curTab !== 'dash') return;
   try {
     const [dev, ps] = await Promise.all([
       fetch('/api/devices').then(r => r.json()),
@@ -331,6 +335,12 @@ async function poll() {
   }
 }
 
+// Firmware version never changes at runtime: fetch once so it shows on every tab.
+fetch('/api/status').then(r => r.json())
+  .then(s => { document.getElementById('fwver').textContent = 'Firmware ' + s.fw_version; })
+  .catch(e => {});
+
+showTab(localStorage.getItem('tab') || 'dash');
 poll();
 setInterval(poll, 2000);
 </script>

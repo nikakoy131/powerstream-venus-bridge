@@ -10,6 +10,7 @@
 #include "esp_timer.h"
 #include "esp_system.h"
 #include "esp_ota_ops.h"
+#include "esp_app_desc.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -101,12 +102,14 @@ static esp_err_t status_handler(httpd_req_t *req)
     json_esc(apssid, sizeof(apssid), w.ap_ssid);
     snprintf(buf, sizeof(buf),
              "{\"hostname\":\"" WIFI_HOSTNAME "\","
+             "\"fw_version\":\"%s\","
              "\"uptime_s\":%lld,"
              "\"heap_free\":%lu,"
              "\"sta\":{\"enabled\":%s,\"connected\":%s,\"ssid\":\"%s\","
              "\"ip\":\"%s\",\"rssi\":%d,\"retries\":%d},"
              "\"ap\":{\"ssid\":\"%s\",\"ip\":\"192.168.4.1\","
              "\"active\":%s,\"fallback\":%s,\"clients\":%d}}",
+             esp_app_get_description()->version,
              (long long)(esp_timer_get_time() / 1000000),
              (unsigned long)esp_get_free_heap_size(),
              w.sta_enabled ? "true" : "false",
