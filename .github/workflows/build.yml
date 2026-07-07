@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # full history + tags so `git describe` embeds a version
 
       - uses: actions/setup-python@v6
         with:
