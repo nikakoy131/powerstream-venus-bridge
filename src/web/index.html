@@ -119,11 +119,20 @@
     <label class="check"><input type="checkbox" id="f-appclr" name="ap_pass_clear" value="1">
       remove password (open network)</label>
 
+    <h2>Software updates</h2>
+    <label>Project GitHub URL</label>
+    <input id="f-ghurl" name="github_url" autocomplete="off"
+           placeholder="https://github.com/owner/repo">
+    <div class="hint">Used by "Check for updates" to look up the latest release.
+      Save first if you change it.</div>
+
     <button type="submit">Save &amp; reboot</button>
     <div id="setmsg"></div>
   </form>
 
   <h2>Firmware update</h2>
+  <button type="button" onclick="checkUpdate()">Check for updates</button>
+  <div id="updmsg" class="hint"></div>
   <input type="file" id="fwfile" accept=".bin">
   <button onclick="uploadFw()">Flash &amp; reboot</button>
   <div class="hint">Upload firmware.bin from .pio/build/esp32-c6-devkitc-1/ —
@@ -194,7 +203,24 @@ async function loadSettings() {
     document.getElementById('f-appass').placeholder = s.ap_pass_set ? 'unchanged' : '(open network)';
     document.getElementById('f-apen').checked = !!s.ap_enabled;
     document.getElementById('f-appclr').checked = false;
+    document.getElementById('f-ghurl').value = s.github_url || '';
   } catch (e) {}
+}
+
+async function checkUpdate() {
+  const msg = document.getElementById('updmsg');
+  msg.textContent = 'Checking GitHub…';
+  try {
+    const j = await fetch('/api/update/check').then(r => r.json());
+    if (!j.ok) { msg.textContent = 'Check failed: ' + (j.err || '?'); return; }
+    if (j.update_available) {
+      msg.innerHTML = '<b>Update available:</b> ' + esc(j.latest) + ' (you have ' +
+        esc(j.current) + '). <a href="' + esc(j.url) + '" target="_blank" rel="noopener">' +
+        'Download the .bin</a>, then flash it below.';
+    } else {
+      msg.textContent = 'Up to date (' + esc(j.current) + ').';
+    }
+  } catch (e) { msg.textContent = 'Check failed: ' + e.message; }
 }
 
 async function saveSettings(ev) {

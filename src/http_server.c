@@ -4,6 +4,7 @@
 #include "settings.h"
 #include "wifi_apsta.h"
 #include "weblog.h"
+#include "updatecheck.h"
 #include "index_html.h"
 #include "esp_log.h"
 #include "esp_http_server.h"
@@ -136,16 +137,27 @@ static esp_err_t log_handler(httpd_req_t *req)
 static esp_err_t settings_get_handler(httpd_req_t *req)
 {
     settings_t cfg = settings_get();
-    char ssid[80], uid[72], apssid[80], buf[384];
+    char ssid[80], uid[72], apssid[80], ghurl[264], buf[768];
     json_esc(ssid, sizeof(ssid), cfg.wifi_ssid);
     json_esc(uid, sizeof(uid), cfg.user_id);
     json_esc(apssid, sizeof(apssid), cfg.ap_ssid);
+    json_esc(ghurl, sizeof(ghurl), cfg.github_url);
     snprintf(buf, sizeof(buf),
              "{\"wifi_ssid\":\"%s\",\"user_id\":\"%s\",\"wifi_pass_set\":%s,"
-             "\"ap_ssid\":\"%s\",\"ap_enabled\":%s,\"ap_pass_set\":%s}",
+             "\"ap_ssid\":\"%s\",\"ap_enabled\":%s,\"ap_pass_set\":%s,"
+             "\"github_url\":\"%s\"}",
              ssid, uid, cfg.wifi_pass[0] ? "true" : "false",
              apssid, cfg.ap_enabled ? "true" : "false",
-             cfg.ap_pass[0] ? "true" : "false");
+             cfg.ap_pass[0] ? "true" : "false", ghurl);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_sendstr(req, buf);
+    return ESP_OK;
+}
+
+static esp_err_t update_check_handler(httpd_req_t *req)
+{
+    static char buf[320];   /* off the httpd task stack */
+    updatecheck_run(buf, sizeof(buf));
     httpd_resp_set_type(req, "application/json");
     httpd_resp_sendstr(req, buf);
     return ESP_OK;
@@ -224,7 +236,7 @@ static esp_err_t ota_post_handler(httpd_req_t *req)
 
 static esp_err_t settings_post_handler(httpd_req_t *req)
 {
-    char body[512];
+    char body[768];
     int total = req->content_len;
     if (total > (int)sizeof(body) - 1) total = sizeof(body) - 1;
     int recvd = 0;
@@ -241,6 +253,9 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
         strlcpy(cfg.wifi_ssid, val, sizeof(cfg.wifi_ssid));
     if (form_get(body, "user_id", val, sizeof(val)))
         strlcpy(cfg.user_id, val, sizeof(cfg.user_id));
+    char urlval[160];
+    if (form_get(body, "github_url", urlval, sizeof(urlval)) && urlval[0])
+        strlcpy(cfg.github_url, urlval, sizeof(cfg.github_url));
     /* Only replace the password when a non-empty value is submitted. */
     if (form_get(body, "wifi_pass", val, sizeof(val)) && val[0])
         strlcpy(cfg.wifi_pass, val, sizeof(cfg.wifi_pass));
@@ -296,7 +311,10 @@ static esp_err_t session_open_cb(httpd_handle_t hd, int sockfd)
 void http_server_start(void)
 {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
-    cfg.max_uri_handlers = 10;
+    cfg.max_uri_handlers = 11;
+    /* The update check does a TLS handshake on the httpd task; the default
+       4 KB stack overflows mid-handshake, so give it headroom. */
+    cfg.stack_size = 8192;
     /* Purge idle connections instead of refusing new ones once the session
        table fills up — stale keep-alive sessions otherwise wedge the
        server into "accept error 23" (ENFILE) until reboot. */
@@ -322,6 +340,7 @@ void http_server_start(void)
     httpd_uri_t stat = { .uri = "/api/status", .method = HTTP_GET, .handler = status_handler };
     httpd_uri_t wlog = { .uri = "/api/log", .method = HTTP_GET, .handler = log_handler };
     httpd_uri_t ota  = { .uri = "/api/ota", .method = HTTP_POST, .handler = ota_post_handler };
+    httpd_uri_t upd  = { .uri = "/api/update/check", .method = HTTP_GET, .handler = update_check_handler };
     httpd_register_uri_handler(server, &root);
     httpd_register_uri_handler(server, &api);
     httpd_register_uri_handler(server, &ps);
@@ -330,5 +349,6 @@ void http_server_start(void)
     httpd_register_uri_handler(server, &stat);
     httpd_register_uri_handler(server, &wlog);
     httpd_register_uri_handler(server, &ota);
+    httpd_register_uri_handler(server, &upd);
     ESP_LOGI(TAG, "HTTP server started on port 80");
 }

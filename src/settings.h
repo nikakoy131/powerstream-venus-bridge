@@ -6,6 +6,9 @@
 #define AP_SSID_DEFAULT "PowerStream-Bridge"
 #define AP_PASS_DEFAULT "powerstream"
 
+/* Project repo used by the "check for updates" feature (GitHub releases API). */
+#define GITHUB_URL_DEFAULT "https://github.com/nikakoy131/powerstream-venus-bridge"
+
 /* Runtime configuration, persisted in NVS and editable from the web UI.
    On first boot (empty NVS) values are seeded from the optional gitignored
    headers wifi_secrets.h / ps_config.h, else left blank. */
@@ -17,6 +20,7 @@ typedef struct {
     char ap_pass[65];   /* empty = open network */
     bool ap_enabled;    /* if false, AP still starts when STA is unconfigured
                            or can't connect (fallback) */
+    char github_url[128]; /* project repo for update checks */
 } settings_t;
 
 void       settings_init(void);          /* load NVS + seed defaults */
