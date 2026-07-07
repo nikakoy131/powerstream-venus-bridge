@@ -108,23 +108,41 @@ framing + reassembly), `packet.c` (inner V2/V3 packet, seq[0] XOR unmask, sentin
 state machine lives in `ble_scan.c`. The device allows **one BLE connection** at a
 time, so the bridge competes with the EcoFlow phone app for the slot.
 
-## Milestone 3 — SunSpec Modbus-TCP (DONE, pending Venus verification)
+## Milestone 3 — SunSpec Modbus-TCP (DONE, verified on a real Cerbo GX)
 
-`sunspec.c` builds the 152-register map (SunS marker, models 1/101/120, end
+`sunspec.c` builds the 178-register map (SunS marker, models 1/101/120/123, end
 marker) and `sunspec_update()` refreshes model 101 from the latest heartbeat with
 correct SF scaling (A_SF=-3, V/W/Hz/DC/Tmp_SF=-1). `modbus.c` is a minimal
-Modbus-TCP server on port 502 (FC3 only, unit id 126) started from `main.c`.
-PV voltage maps to the model-101 **DCV** register. Verified end-to-end with a host
-Modbus client (correct marker, model headers, lengths, live values). **Not yet
-confirmed against a real Cerbo GX** — that's the remaining acceptance test.
+Modbus-TCP server on port 502 (FC3/FC6/FC16, unit id 126) started from `main.c`.
+PV voltage maps to the model-101 **DCV** register. Venus's `dbus-fronius` detects
+the device via SunSpec; it also probes `/solar_api/v1/...` over HTTP on every
+rescan — answering 404 is correct (those probe misses are silenced to E-level in
+`http_server.c`, don't "fix" them by emulating the Fronius HTTP API: in
+dbus-fronius that path is legacy, data-only, and has **no power limiting**).
 
 Lifetime Wh is accumulated in RAM (`s_wh_accum` in `sunspec.c`) and resets on
 reboot.
 
+## Milestone 4 — Venus power limiting (model 123 + BLE setpoint, UNTESTED)
+
+Venus ESS feed-in limiting works with any SunSpec device exposing model 120
+(`WRtg` > 0) + model 123 (immediate controls); non-Fronius/ABB devices need the
+per-inverter `EnableLimiter` setting flipped once on the GX. Flow:
+`dbus-fronius` FC16-writes `WMaxLimPct..WMaxLim_Ena` (whole %, `WMaxLimPct_SF=0`)
+→ `sunspec_write()` (only `Conn..WMaxLim_Ena` is writable) → `apply_limit()`
+converts % of `PS_WRTG_W` (800, must equal model-120 WRtg — the % conversion then
+cancels for other hardware ratings) to deci-watts → `ble_ps_request_watts()`
+(ble_scan.c) posts it lock-free; a 1 s esp_timer sends `permanent_watts_pack`
+(cmd_set 0x14, cmd_id 0x81, protobuf field 1 varint, deci-watts) when connected,
+deduped against the last sent value, re-armed on reconnect. The device echoes the
+setpoint back as heartbeat field 48 (`load_watts`). The app-set load power is
+captured as baseline when limiting engages and restored when Venus releases
+(`WMaxLim_Ena`→0); baseline is lost on reboot (then release = leave as-is).
+
 ## Remaining milestones
 
-- **Venus OS acceptance** — confirm `dbus-fronius` auto-detects the device as
-  `com.victronenergy.pvinverter` on a real Cerbo GX.
+- **Power-limiting acceptance** — verify Venus ESS feed-in limiting end-to-end
+  against real hardware (milestone 4 is code-complete but untested).
 - **NVS persistence** — persist lifetime Wh across reboots.
 
 Key external references: [ha-ef-ble](https://github.com/rabits/ha-ef-ble) (BLE protocol; note its `encrypt_type` is read from the advert's `capability_flags`), [nanopb](https://github.com/nanopb/nanopb).

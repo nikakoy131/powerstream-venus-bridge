@@ -1,17 +1,31 @@
 #include "sunspec.h"
 #include "ps_data.h"
+#include "ble_scan.h"
 
 #include <string.h>
 #include "esp_timer.h"
 
-/* 0-based register indices of each block within the 152-register map. */
+/* 0-based register indices of each block within the 178-register map. */
 #define M1_HDR   2     /* Common header   */
 #define M1_DATA  4     /* Common data (66) */
 #define M101_HDR 70    /* Inverter header  */
 #define M101     72    /* Inverter data (50) */
 #define M120_HDR 122   /* Nameplate header */
 #define M120     124   /* Nameplate data (26) */
-#define END_HDR  150
+#define M123_HDR 150   /* Immediate Controls header */
+#define M123     152   /* Immediate Controls data (24) */
+#define END_HDR  176
+
+/* Model 123 data offsets we care about. dbus-fronius writes the block
+   WMaxLimPct..WMaxLim_Ena (M123+3..+7) in one FC16 transaction. */
+#define M123_CONN        (M123 + 2)
+#define M123_WMAXLIMPCT  (M123 + 3)
+#define M123_WMAXLIM_ENA (M123 + 7)
+
+/* Must match WRtg in model 120. Used on both sides of the % conversion
+   (Venus: watts->pct, us: pct->watts), so a device with a different real
+   rating still receives the wattage Venus asked for. */
+#define PS_WRTG_W 800
 
 #define U16_NA 0xFFFF      /* uint16 / enum "not implemented" */
 #define S16_NA 0x8000      /* int16 "not implemented"         */
@@ -86,6 +100,34 @@ void sunspec_init(void)
     set_u16(M120 + 23, U16_NA);  /* MaxDisChaRte      */
     set_s16(M120 + 24, 0);       /* MaxDisChaRte_SF   */
     set_u16(M120 + 25, 0);       /* Pad               */
+
+    /* Model 123 — Immediate Controls (write target for power limiting) */
+    set_u16(M123_HDR, 123);
+    set_u16(M123_HDR + 1, 24);
+    set_u16(M123 + 0, U16_NA);   /* Conn_WinTms        */
+    set_u16(M123 + 1, U16_NA);   /* Conn_RvrtTms       */
+    set_u16(M123 + 2, 1);        /* Conn = connected   */
+    set_u16(M123 + 3, 100);      /* WMaxLimPct (% of WRtg) */
+    set_u16(M123 + 4, 0);        /* WMaxLimPct_WinTms  */
+    set_u16(M123 + 5, 0);        /* WMaxLimPct_RvrtTms */
+    set_u16(M123 + 6, 0);        /* WMaxLimPct_RmpTms  */
+    set_u16(M123 + 7, 0);        /* WMaxLim_Ena = off  */
+    set_s16(M123 + 8, S16_NA);   /* OutPFSet           */
+    set_u16(M123 + 9, 0);        /* OutPFSet_WinTms    */
+    set_u16(M123 + 10, 0);       /* OutPFSet_RvrtTms   */
+    set_u16(M123 + 11, 0);       /* OutPFSet_RmpTms    */
+    set_u16(M123 + 12, 0);       /* OutPFSet_Ena       */
+    set_s16(M123 + 13, S16_NA);  /* VArWMaxPct         */
+    set_s16(M123 + 14, S16_NA);  /* VArMaxPct          */
+    set_s16(M123 + 15, S16_NA);  /* VArAvalPct         */
+    set_u16(M123 + 16, 0);       /* VArPct_WinTms      */
+    set_u16(M123 + 17, 0);       /* VArPct_RvrtTms     */
+    set_u16(M123 + 18, 0);       /* VArPct_RmpTms      */
+    set_u16(M123 + 19, U16_NA);  /* VArPct_Mod         */
+    set_u16(M123 + 20, 0);       /* VArPct_Ena         */
+    set_s16(M123 + 21, 0);       /* WMaxLimPct_SF (whole %) */
+    set_s16(M123 + 22, 0);       /* OutPFSet_SF        */
+    set_s16(M123 + 23, 0);       /* VArPct_SF          */
 
     /* End marker */
     set_u16(END_HDR, 0xFFFF);
@@ -168,5 +210,40 @@ int sunspec_read(uint16_t start, uint16_t count, uint16_t *out)
         return 0;
     for (uint16_t i = 0; i < count; i++)
         out[i] = s_regs[start + i];
+    return count;
+}
+
+/* The PowerStream's "custom load power" is a demand setpoint, not a cap, so
+   the app-configured value is captured when limiting first engages and put
+   back when Venus releases the limit (WMaxLim_Ena -> 0). Lost on reboot:
+   with no baseline the release is left as-is rather than guessing. */
+static int32_t s_baseline_dw = -1;
+static bool    s_limit_active;
+
+static void apply_limit(void)
+{
+    bool ena = s_regs[M123_WMAXLIM_ENA] == 1;
+    if (ena && !s_limit_active) {
+        ps_values_t v;
+        s_baseline_dw = ps_data_get(&v) ? (int32_t)v.load_watts : -1;
+    }
+    if (ena) {
+        uint32_t pct = s_regs[M123_WMAXLIMPCT];
+        if (pct > 100) pct = 100;
+        ble_ps_request_watts((int32_t)(pct * PS_WRTG_W / 10)); /* % -> deci-W */
+    } else if (s_limit_active && s_baseline_dw >= 0) {
+        ble_ps_request_watts(s_baseline_dw);
+    }
+    s_limit_active = ena;
+}
+
+int sunspec_write(uint16_t start, uint16_t count, const uint16_t *vals)
+{
+    if (count == 0 ||
+        start < M123_CONN || (uint32_t)start + count > M123_WMAXLIM_ENA + 1)
+        return 0;
+    for (uint16_t i = 0; i < count; i++)
+        s_regs[start + i] = vals[i];
+    apply_limit();
     return count;
 }
